@@ -14,17 +14,24 @@ import streamlit as st
 
 from projectcs.config import NAMES, PRIORITY_MAPS, ROSTER
 from projectcs.data import (
+    demo_economy_summary,
+    demo_side_summary,
+    demo_tactical_summary,
     lineup_summary,
     load_data,
+    load_demo_events,
+    load_demo_rounds,
     map_summary,
+    prepare_heatmap_events,
     summary,
     team_maps,
     using_snapshot,
 )
 from projectcs import db as db_module
+from projectcs import demos as demos_module
 from projectcs.ui import (
-    CHART_CONFIG, build_map_chart, build_trend_chart, metric_value,
-    player_view, show_players, show_records, show_table, trend_data,
+    CHART_CONFIG, build_map_chart, build_radar_heatmap_chart, build_trend_chart,
+    metric_value, player_view, show_players, show_records, show_table, trend_data,
 )
 
 st.set_page_config(page_title="ProjectCS · Team intelligence", page_icon="◈", layout="wide")
@@ -74,8 +81,11 @@ def owner_access():
 with st.sidebar:
     st.markdown("## ◈ ProjectCS")
     st.caption("TEAM PERFORMANCE LAB")
-    page = st.radio("Navigazione", ["Panoramica", "Giocatori", "Partite", "Revisione", "Allenamento"],
-                    label_visibility="collapsed")
+    page = st.radio(
+        "Navigazione",
+        ["Panoramica", "Demo & Heatmap", "Giocatori", "Partite", "Revisione", "Allenamento"],
+        label_visibility="collapsed",
+    )
     st.divider()
     owner = owner_access()
     st.caption("Gestione attiva" if owner else "Consultazione")
@@ -89,6 +99,7 @@ st.markdown('<div class="eyebrow">PROJECTCS / PERFORMANCE LAB</div>', unsafe_all
 st.title(page)
 descriptions = {
     "Panoramica": "Il rendimento del core, una mappa alla volta.",
+    "Demo & Heatmap": "Statistiche tattiche da demo (T/CT, 5v4, siti A/B, economia), heatmap 2D e coda download.",
     "Giocatori": "Contributi individuali, contesto del ruolo e confronto dentro/fuori.",
     "Partite": "Risultati, composizioni e dettagli delle mappe giocate.",
     "Revisione": "Cosa ripetere, cosa verificare e cosa migliorare.",
@@ -306,3 +317,118 @@ elif page == "Allenamento":
                 st.rerun()
             else:
                 st.error("Inserisci titolo e azione.")
+
+elif page == "Demo & Heatmap":
+    if filtered.empty:
+        st.info("Nessuna partita corrisponde ai filtri.")
+        st.stop()
+    totals = summary(filtered)
+    demo_events_df = load_demo_events()
+    demo_rounds_df = load_demo_rounds()
+    hm_events = prepare_heatmap_events(demo_events_df, filtered)
+    side_table = demo_side_summary(demo_rounds_df, filtered)
+    tactical_table = demo_tactical_summary(demo_rounds_df, filtered)
+    econ_table = demo_economy_summary(demo_rounds_df, filtered)
+    queue_items = [] if using_snapshot() else demos_module.pending_demo_queue()
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Copertura demo campione", metric_value(totals["demo_coverage"], "%"))
+    k2.metric("Eventi demo nel campione", len(hm_events))
+    k3.metric("Round tattici estratti", int(side_table[["Round T", "Round CT"]].sum().sum()) if not side_table.empty else 0)
+    k4.metric("In coda FACEIT (≤30gg)", "—" if using_snapshot() else len(queue_items))
+    st.caption(
+        "Le metriche demo sono mostrate esclusivamente per le mappe con killfeed e round validati e riconciliati. "
+        "I file .dem vengono eliminati automaticamente subito dopo l'estrazione per non occupare spazio."
+    )
+
+    with st.container(border=True):
+        st.subheader("Mappa tattica 2D & Heatmap Radar")
+        avail_maps = sorted(filtered["map"].unique())
+        pref_maps = [m for m in avail_maps if m in PRIORITY_MAPS] + [m for m in avail_maps if m not in PRIORITY_MAPS]
+        f1, f2, f3, f4 = st.columns([1.2, 1.2, 1.4, 1.2])
+        hm_map = f1.selectbox("Mappa radar", pref_maps, format_func=lambda m: str(m).title())
+        hm_player = f2.selectbox("Giocatore", ["Tutti del roster"] + NAMES + ["Tutti (inclusi avversari)"])
+        hm_filter = f3.selectbox(
+            "Filtro eventi",
+            ["Tutte le morti", "Morti senza trade (>5s)", "Duelli di apertura (First Kill/Death)"],
+        )
+        hm_mode_label = f4.selectbox("Coordinate", ["Posizione vittima", "Posizione killer"])
+        show_vec = st.checkbox("Mostra traiettorie duelli (killer → vittima)", value=True)
+
+        coord_mode = "victim" if hm_mode_label == "Posizione vittima" else "attacker"
+        include_opp = hm_player == "Tutti (inclusi avversari)"
+        mode_events = prepare_heatmap_events(
+            demo_events_df,
+            filtered,
+            mode=coord_mode,
+            include_opponents=include_opp,
+        )
+        map_ev = mode_events[mode_events["map"] == hm_map].copy() if not mode_events.empty else mode_events
+        if hm_player not in {"Tutti del roster", "Tutti (inclusi avversari)"} and not map_ev.empty:
+            if coord_mode == "victim":
+                map_ev = map_ev[
+                    (map_ev["victim_name"] == hm_player)
+                    | (map_ev["victim_id"].isin(filtered[filtered["nickname"] == hm_player]["player_id"].unique()))
+                ]
+            else:
+                map_ev = map_ev[
+                    (map_ev["attacker_name"] == hm_player)
+                    | (map_ev["attacker_id"].isin(filtered[filtered["nickname"] == hm_player]["player_id"].unique()))
+                ]
+        if hm_filter == "Morti senza trade (>5s)" and not map_ev.empty:
+            map_ev = map_ev[map_ev["is_traded"] == 0]
+        elif hm_filter == "Duelli di apertura (First Kill/Death)" and not map_ev.empty:
+            map_ev = map_ev[map_ev["is_opening"] == 1]
+
+        st.plotly_chart(
+            build_radar_heatmap_chart(map_ev, hm_map, mode=coord_mode, show_vectors=show_vec),
+            width="stretch",
+            theme=None,
+            config=CHART_CONFIG,
+        )
+        if map_ev.empty or map_ev.dropna(subset=["victim_rx", "victim_ry"]).empty:
+            st.caption(
+                f"Nessuna coordinata posizionale demo presente per {str(hm_map).title()} con i filtri selezionati. "
+                "Il grafico mostra la griglia tattica di riferimento dei siti."
+            )
+
+    st.subheader("Split reale Lato T vs Lato CT (da Demo)")
+    if side_table.empty:
+        st.info("Nessun round demo validato per le mappe nel filtro corrente. I parziali 1°/2° half in Panoramica non indicano il lato T/CT.")
+    else:
+        show_table(side_table)
+
+    st.subheader("Conversioni 5v4 / 4v5, Post-plant Siti A/B e Retake")
+    if tactical_table.empty:
+        st.info("Statistiche 5v4, post-plant A/B e retake disponibili dopo l'elaborazione dei round demo.")
+    else:
+        show_table(tactical_table)
+
+    st.subheader("Rendimento per Economia (Pistol, Eco, Force, Full Buy)")
+    if econ_table.empty:
+        st.info("Nessun dato economico demo disponibile per il filtro selezionato.")
+    else:
+        show_table(econ_table)
+
+    if owner and not using_snapshot():
+        st.divider()
+        st.subheader("Gestione coda Demo, Rate-Limit FACEIT e Auto-Pulizia")
+        st.caption(
+            "Puoi elaborare file depositati in `ProjectCS/demos/` oppure scaricare gradualmente le demo da FACEIT. "
+            "Ogni file `.dem` viene eliminato automaticamente subito dopo la validazione."
+        )
+        c_act1, c_act2 = st.columns(2)
+        if c_act1.button("Elabora cartella locale demos/ ed elimina completate", width="stretch"):
+            res = demos_module.ingest_local_demos(delete_after_ingest=True)
+            st.success(
+                f"Elaborate {res['processed']} demo locali: {res['completed']} completate, {res['deleted']} file rimossi."
+            )
+            st.rerun()
+        if c_act2.button("Scarica lotto demo da FACEIT (rate-limited + auto-delete)", width="stretch"):
+            ctrl = demos_module.RateLimitController(min_interval_seconds=10.0, max_wait_seconds=60.0)
+            dl = demos_module.FaceitDemoDownloader(api_key=secret("FACEIT_DOWNLOAD_API_KEY") or secret("FACEIT_API_KEY"), rate_controller=ctrl)
+            dl_res = demos_module.download_and_process_queue(downloader=dl, limit=3)
+            st.info(
+                f"Coda: {dl_res['queued']} · Tentate: {dl_res['attempted']} · Completate: {dl_res['completed']} · Scadute: {dl_res['expired']}"
+            )
+            st.rerun()

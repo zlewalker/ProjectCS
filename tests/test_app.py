@@ -12,6 +12,9 @@ class AppTests(unittest.TestCase):
         self.snapshot_mode = self.enterContext(patch('projectcs.data.using_snapshot', return_value=False))
         self.rows = self.enterContext(patch('projectcs.data.read_rows', return_value=app_rows()))
         self.enterContext(patch('projectcs.db.read_records', return_value=[]))
+        self.enterContext(patch('projectcs.db.read_demo_events', return_value=[]))
+        self.enterContext(patch('projectcs.db.read_demo_rounds', return_value=[]))
+        self.enterContext(patch('projectcs.demos.pending_demo_queue', return_value=[]))
         self.enterContext(patch('projectcs.db.backup', return_value=None))
 
     def test_navigation_uses_only_faceit_data(self):
@@ -19,7 +22,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(len(app.sidebar.radio), 1)
         self.assertEqual(app.metric[0].value, '1')
-        for page in ['Giocatori', 'Partite', 'Revisione', 'Allenamento', 'Panoramica']:
+        for page in ['Demo & Heatmap', 'Giocatori', 'Partite', 'Revisione', 'Allenamento', 'Panoramica']:
             app.sidebar.radio[0].set_value(page).run(timeout=30)
             self.assertEqual(len(app.exception), 0, page)
 

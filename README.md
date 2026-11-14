@@ -39,7 +39,11 @@ Nell'ambiente portable preparato sul PC del proprietario è disponibile anche
 - Elenco partite con punteggi 1°/2° half, dettaglio mappa e download CSV.
 - Note positive/negative, obiettivi e stati, modificabili solo dal proprietario.
 - Importatore ufficiale FACEIT paginato, incrementale (salta le partite già in archivio salvo `--force`), con rielaborazione locale (`--reprocess-local`) ed export snapshot (`--export-snapshot`).
-- Motore di calcolo **Morti senza trade %** (finestra 5 secondi sugli eventi `player_death` nella tabella `events`), con preservazione automatica dei conteggi demo durante i sync API.
+- **Pipeline Demo CS2 (`projectcs/demos.py`) con Rate-Limit FACEIT e Auto-Pulizia ("Parse & Delete")**:
+  - Ingestione automatica dalla cartella `demos/` (supporta `.dem`, `.dem.gz`, `.dem.zst` e bundle `.json`) con cancellazione automatica del file sorgente non appena l'analisi è validata e riconciliata (`status="complete"`), conservando il file locale in caso di errore/incompletezza.
+  - Coda prioritaria per il download delle demo da FACEIT (`pending_demo_queue`: priorità ai 5-stack e al core 3+ entro la finestra di conservazione di 30 giorni), con `RateLimitController` che rispetta un intervallo minimo tra i download (`--min-interval`), legge `Retry-After` / `X-RateLimit-Remaining` / `X-RateLimit-Reset`, attende automaticamente il reset entro `--max-wait` o pianifica `next_retry_at` in `demo_status` per riprendere al run successivo, e marca come `expired` le demo scadute (`404`/`410`).
+  - Sezione **Demo & Heatmap** su Streamlit con **Mappa Tattica 2D / Heatmap Radar** (calibrazione coordinate CS2 `[0..1024]` e traiettorie duelli), **Split reale Lato T vs CT**, **Conversioni 5v4 / Recuperi 4v5**, **Post-plant / Retake Siti A e B** e **Rendimento per Economia** (`Pistol`, `Eco`, `Force`, `Full Buy`).
+  - Workflow **GitHub Actions** (`.github/workflows/demo_sync.yml`) per eseguire sync, download/parsing demo e auto-cancellazione direttamente nel cloud di GitHub senza occupare spazio in locale.
 
 Le statistiche visualizzate provengono esclusivamente dalle partite importate da FACEIT (e dagli eventuali eventi demo associati).
 Accesso API e importazione live verificati il 12 novembre 2026. Le chiavi restano locali.
@@ -59,6 +63,12 @@ python -m projectcs.sync --since 2026-10-01 --until 2026-11-01
 
 # Ricalcolo locale delle metriche dai JSON grezzi già salvati + aggiornamento CSV pubblicato:
 python -m projectcs.sync --reprocess-local --export-snapshot
+
+# Elaborazione demo nella cartella locale demos/ con auto-cancellazione dei file completati:
+python -m projectcs.demos --ingest-local --export-snapshot
+
+# Download graduale delle demo mancanti da FACEIT (rate-limited + auto-delete) ed export snapshot:
+python -m projectcs.demos --download-missing --limit 5 --min-interval 12 --export-snapshot
 ```
 
 L'importatore cerca lo storico di tutti e cinque: comprende solo, duo e gruppi.

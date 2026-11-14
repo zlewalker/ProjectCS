@@ -2,9 +2,11 @@ from pathlib import Path
 import pandas as pd
 
 from projectcs.config import DB_PATH, NAMES, ROOT
-from projectcs.db import read_rows
+from projectcs.db import read_demo_events, read_demo_rounds, read_rows
 
 SNAPSHOT_PATH = ROOT / "published" / "player_maps.csv"
+DEMO_EVENTS_SNAPSHOT_PATH = ROOT / "published" / "demo_events.csv"
+DEMO_ROUNDS_SNAPSHOT_PATH = ROOT / "published" / "demo_rounds.csv"
 
 COLUMNS = [
     "match_id",
@@ -354,3 +356,308 @@ def lineup_summary(df, min_members=3):
         ascending=[False, False, True],
         ignore_index=True,
     )
+
+
+DEMO_EVENT_COLUMNS = [
+    "match_id",
+    "map_no",
+    "round_no",
+    "event_index",
+    "tick",
+    "event_type",
+    "map",
+    "date",
+    "victim_id",
+    "victim_name",
+    "victim_team",
+    "victim_side",
+    "attacker_id",
+    "attacker_name",
+    "attacker_team",
+    "attacker_side",
+    "time_sec",
+    "weapon",
+    "headshot",
+    "is_opening",
+    "is_traded",
+    "victim_x",
+    "victim_y",
+    "victim_z",
+    "attacker_x",
+    "attacker_y",
+    "attacker_z",
+]
+
+DEMO_ROUND_COLUMNS = [
+    "match_id",
+    "map_no",
+    "round_no",
+    "map",
+    "date",
+    "team_id",
+    "roster_count",
+    "side",
+    "won",
+    "win_reason",
+    "first_kill",
+    "first_death",
+    "plant_site",
+    "post_plant_won",
+    "retake_attempted",
+    "retake_won",
+    "equip_value",
+    "buy_type",
+]
+
+
+def load_demo_events(db_path=None, snapshot_path=None):
+    is_snap = using_snapshot(db_path=db_path, snapshot_path=SNAPSHOT_PATH)
+    snap_target = Path(snapshot_path) if snapshot_path is not None else Path(DEMO_EVENTS_SNAPSHOT_PATH)
+    if is_snap:
+        rows = read_snapshot(snap_target)
+    else:
+        rows = read_demo_events(db_path if db_path is not None else DB_PATH)
+    df = pd.DataFrame(rows, columns=DEMO_EVENT_COLUMNS)
+    if not df.empty:
+        for col in ("map_no", "round_no", "event_index", "tick", "time_sec", "is_opening", "is_traded", "victim_x", "victim_y", "victim_z", "attacker_x", "attacker_y", "attacker_z"):
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
+
+
+def load_demo_rounds(db_path=None, snapshot_path=None):
+    is_snap = using_snapshot(db_path=db_path, snapshot_path=SNAPSHOT_PATH)
+    snap_target = Path(snapshot_path) if snapshot_path is not None else Path(DEMO_ROUNDS_SNAPSHOT_PATH)
+    if is_snap:
+        rows = read_snapshot(snap_target)
+    else:
+        rows = read_demo_rounds(db_path if db_path is not None else DB_PATH)
+    df = pd.DataFrame(rows, columns=DEMO_ROUND_COLUMNS)
+    if not df.empty:
+        for col in ("map_no", "round_no", "roster_count", "won", "first_kill", "first_death", "post_plant_won", "retake_attempted", "retake_won", "equip_value"):
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
+
+
+def _filter_by_maps_df(demo_df, maps_df):
+    if demo_df is None or demo_df.empty:
+        return pd.DataFrame(columns=demo_df.columns if demo_df is not None else [])
+    if maps_df is None or maps_df.empty:
+        return demo_df.iloc[0:0].copy()
+    valid_keys = set(zip(maps_df["match_id"].astype(str), maps_df["map_no"].astype(int)))
+    if "team_id" in demo_df.columns and "team_id" in maps_df.columns:
+        valid_team_keys = set(
+            zip(
+                maps_df["match_id"].astype(str),
+                maps_df["map_no"].astype(int),
+                maps_df["team_id"].astype(str),
+            )
+        )
+        mask = [
+            (
+                (str(m), int(n), str(t)) in valid_team_keys
+                if pd.notna(t) and str(t).strip() != ""
+                else (str(m), int(n)) in valid_keys
+            )
+            for m, n, t in zip(
+                demo_df["match_id"],
+                demo_df["map_no"].fillna(-1),
+                demo_df["team_id"],
+            )
+        ]
+    else:
+        mask = [
+            (str(m), int(n)) in valid_keys
+            for m, n in zip(demo_df["match_id"], demo_df["map_no"].fillna(-1))
+        ]
+    return demo_df.loc[mask].copy()
+
+
+def demo_side_summary(rounds_df, maps_df=None):
+    """
+    Calcola il rendimento reale Lato T vs Lato CT dai round demo validati
+    (mai stimato dai parziali 1°/2° half).
+    """
+    sub = _filter_by_maps_df(rounds_df, maps_df) if maps_df is not None else rounds_df
+    cols = [
+        "Mappa",
+        "Mappe demo",
+        "Round T",
+        "Win T %",
+        "Round CT",
+        "Win CT %",
+    ]
+    if sub is None or sub.empty:
+        return pd.DataFrame(columns=cols)
+
+    sub = sub.dropna(subset=["map", "side", "won"]).copy()
+    sub["side"] = sub["side"].astype(str).str.upper()
+    sub = sub[sub["side"].isin(["T", "CT"])]
+    if sub.empty:
+        return pd.DataFrame(columns=cols)
+
+    rows = []
+    for map_name, grp in sub.groupby("map", sort=False):
+        t_rows = grp[grp["side"] == "T"]
+        ct_rows = grp[grp["side"] == "CT"]
+        map_count = len(grp.drop_duplicates(["match_id", "map_no"]))
+        rows.append({
+            "Mappa": map_name,
+            "Mappe demo": int(map_count),
+            "Round T": int(len(t_rows)),
+            "Win T %": float(t_rows["won"].mean() * 100) if len(t_rows) else None,
+            "Round CT": int(len(ct_rows)),
+            "Win CT %": float(ct_rows["won"].mean() * 100) if len(ct_rows) else None,
+        })
+    return pd.DataFrame(rows, columns=cols).sort_values(
+        by=["Mappe demo", "Mappa"], ascending=[False, True], ignore_index=True
+    )
+
+
+def demo_tactical_summary(rounds_df, maps_df=None):
+    """
+    Calcola conversioni 5v4 / recuperi 4v5 e post-plant / retake per sito A/B
+    con denominatori espliciti su round demo validati.
+    """
+    sub = _filter_by_maps_df(rounds_df, maps_df) if maps_df is not None else rounds_df
+    cols = [
+        "Mappa",
+        "Round 5v4",
+        "Conversione 5v4 %",
+        "Round 4v5",
+        "Recupero 4v5 %",
+        "Plant A",
+        "Post-plant A %",
+        "Plant B",
+        "Post-plant B %",
+        "Retake tentati",
+        "Retake %",
+    ]
+    if sub is None or sub.empty:
+        return pd.DataFrame(columns=cols)
+
+    sub = sub.dropna(subset=["map", "won"]).copy()
+    if sub.empty:
+        return pd.DataFrame(columns=cols)
+
+    rows = []
+    for map_name, grp in sub.groupby("map", sort=False):
+        fk = grp[grp["first_kill"] == 1]
+        fd = grp[grp["first_death"] == 1]
+
+        t_grp = grp[grp["side"].astype(str).str.upper() == "T"]
+        plant_a = t_grp[t_grp["plant_site"].astype(str).str.upper() == "A"]
+        plant_b = t_grp[t_grp["plant_site"].astype(str).str.upper() == "B"]
+
+        retakes = grp[grp["retake_attempted"] == 1].dropna(subset=["retake_won"])
+
+        rows.append({
+            "Mappa": map_name,
+            "Round 5v4": int(len(fk)),
+            "Conversione 5v4 %": float(fk["won"].mean() * 100) if len(fk) else None,
+            "Round 4v5": int(len(fd)),
+            "Recupero 4v5 %": float(fd["won"].mean() * 100) if len(fd) else None,
+            "Plant A": int(len(plant_a)),
+            "Post-plant A %": float(plant_a["won"].mean() * 100) if len(plant_a) else None,
+            "Plant B": int(len(plant_b)),
+            "Post-plant B %": float(plant_b["won"].mean() * 100) if len(plant_b) else None,
+            "Retake tentati": int(len(retakes)),
+            "Retake %": float(retakes["retake_won"].mean() * 100) if len(retakes) else None,
+        })
+    return pd.DataFrame(rows, columns=cols)
+
+
+def demo_economy_summary(rounds_df, maps_df=None):
+    """Riepiloga i round e la percentuale di vittoria per fascia economica (Pistol, Eco, Force, Full Buy)."""
+    sub = _filter_by_maps_df(rounds_df, maps_df) if maps_df is not None else rounds_df
+    cols = ["Economia", "Lato", "Round", "Vittorie %", "Valore medio equip."]
+    if sub is None or sub.empty:
+        return pd.DataFrame(columns=cols)
+
+    sub = sub.dropna(subset=["buy_type", "won"]).copy()
+    sub = sub[sub["buy_type"].astype(str).str.strip() != ""]
+    if sub.empty:
+        return pd.DataFrame(columns=cols)
+
+    rows = []
+    for (buy, side), grp in sub.groupby(["buy_type", "side"], dropna=False, sort=False):
+        eq = grp["equip_value"].dropna()
+        rows.append({
+            "Economia": str(buy),
+            "Lato": str(side).upper() if pd.notna(side) else "Tutti",
+            "Round": int(len(grp)),
+            "Vittorie %": float(grp["won"].mean() * 100) if len(grp) else None,
+            "Valore medio equip.": round(float(eq.mean()), 0) if len(eq) else None,
+        })
+    return pd.DataFrame(rows, columns=cols)
+
+
+def prepare_heatmap_events(events_df, maps_df=None, mode="victim", include_opponents=False):
+    """
+    Filtra gli eventi demo sulle mappe selezionate (e per impostazione predefinita
+    sui membri del roster presenti in `maps_df` per il ruolo richiesto da `mode`)
+    e calcola le coordinate radar [0..1024] per vittima e attaccante tramite la calibrazione CS2.
+    """
+    from projectcs.demos import world_to_radar
+
+    sub = _filter_by_maps_df(events_df, maps_df) if maps_df is not None else events_df
+    if sub is None or sub.empty:
+        return pd.DataFrame(
+            columns=DEMO_EVENT_COLUMNS + ["victim_rx", "victim_ry", "attacker_rx", "attacker_ry"]
+        )
+
+    if maps_df is not None and not include_opponents:
+        valid_pids = (
+            set(
+                zip(
+                    maps_df["match_id"].astype(str),
+                    maps_df["map_no"].astype(int),
+                    maps_df["player_id"].astype(str),
+                )
+            )
+            if "player_id" in maps_df.columns
+            else set()
+        )
+        valid_nicks = (
+            set(
+                zip(
+                    maps_df["match_id"].astype(str),
+                    maps_df["map_no"].astype(int),
+                    maps_df["nickname"].astype(str),
+                )
+            )
+            if "nickname" in maps_df.columns
+            else set()
+        )
+        if valid_pids or valid_nicks:
+            id_col = "attacker_id" if mode == "attacker" else "victim_id"
+            name_col = "attacker_name" if mode == "attacker" else "victim_name"
+            roster_mask = [
+                ((str(m), int(n), str(pid)) in valid_pids)
+                or ((str(m), int(n), str(pname)) in valid_nicks)
+                for m, n, pid, pname in zip(
+                    sub["match_id"],
+                    sub["map_no"].fillna(-1),
+                    sub[id_col].fillna(""),
+                    sub[name_col].fillna(""),
+                )
+            ]
+            sub = sub.loc[roster_mask].copy()
+            if sub.empty:
+                return pd.DataFrame(
+                    columns=DEMO_EVENT_COLUMNS + ["victim_rx", "victim_ry", "attacker_rx", "attacker_ry"]
+                )
+
+    v_coords = [
+        world_to_radar(vx, vy, m)
+        for vx, vy, m in zip(sub["victim_x"], sub["victim_y"], sub["map"])
+    ]
+    a_coords = [
+        world_to_radar(ax, ay, m)
+        for ax, ay, m in zip(sub["attacker_x"], sub["attacker_y"], sub["map"])
+    ]
+    sub = sub.copy()
+    sub["victim_rx"] = [c[0] for c in v_coords]
+    sub["victim_ry"] = [c[1] for c in v_coords]
+    sub["attacker_rx"] = [c[0] for c in a_coords]
+    sub["attacker_ry"] = [c[1] for c in a_coords]
+    return sub

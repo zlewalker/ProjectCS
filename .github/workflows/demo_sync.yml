@@ -1,0 +1,93 @@
+name: Sync & Demo Pipeline (Parse & Auto-Delete)
+on:
+  workflow_dispatch:
+    inputs:
+      demo_limit:
+        description: "Numero massimo di demo da scaricare in questo run"
+        required: false
+        default: "5"
+      min_interval:
+        description: "Secondi minimi di attesa tra due download demo"
+        required: false
+        default: "12"
+  schedule:
+    - cron: "0 */6 * * *"
+  push:
+    paths:
+      - "demos/**"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: projectcs-demo-sync
+  cancel-in-progress: false
+
+jobs:
+  sync_and_parse_demos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Restore cached SQLite state
+        uses: actions/cache/restore@v4
+        with:
+          path: data/projectcs.sqlite
+          key: projectcs-sqlite-${{ github.run_id }}
+          restore-keys: |
+            projectcs-sqlite-
+      - name: Install dependencies and CS2 demo parser
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install demoparser2==0.38.0 zstandard==0.23.0
+      - name: Run incremental FACEIT sync and rate-limited demo pipeline
+        id: pipeline
+        env:
+          FACEIT_API_KEY: ${{ secrets.FACEIT_API_KEY }}
+          FACEIT_DOWNLOAD_API_KEY: ${{ secrets.FACEIT_DOWNLOAD_API_KEY }}
+        run: |
+          set +e
+          sync_rc=0
+          if [ -n "$FACEIT_API_KEY" ]; then
+            python -m projectcs.sync --since 2026-08-20 --export-snapshot
+            sync_rc=$?
+          fi
+          python -m projectcs.demos \
+            --ingest-local \
+            --download-missing \
+            --limit "${{ github.event.inputs.demo_limit || '5' }}" \
+            --min-interval "${{ github.event.inputs.min_interval || '12' }}" \
+            --export-snapshot
+          demo_rc=$?
+          echo "sync_rc=$sync_rc" >> "$GITHUB_OUTPUT"
+          echo "demo_rc=$demo_rc" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Save cached SQLite state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/projectcs.sqlite
+          key: projectcs-sqlite-${{ github.run_id }}
+      - name: Commit updated published snapshots and remove processed demos
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add published/
+          if [ -d demos ]; then
+            git add -u demos/ || true
+          fi
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update published snapshots and auto-clean processed demos"
+            git push
+          fi
+      - name: Check pipeline exit status
+        if: always()
+        run: |
+          if [ "${{ steps.pipeline.outputs.sync_rc }}" != "0" ] || [ "${{ steps.pipeline.outputs.demo_rc }}" != "0" ]; then
+            echo "Pipeline completed with partial errors (sync_rc=${{ steps.pipeline.outputs.sync_rc }}, demo_rc=${{ steps.pipeline.outputs.demo_rc }}). Validated snapshots were preserved and committed."
+            exit 1
+          fi

@@ -164,6 +164,22 @@ def show_table(df):
         "Round": ("Round", "%d", 90, "Round giocati."),
         "Round 1° half": ("1° tempo", "%.1f", 110, "Round vinti nel primo tempo; non indica il lato T/CT."),
         "Round 2° half": ("2° tempo", "%.1f", 110, "Round vinti nel secondo tempo; non indica il lato T/CT."),
+        "Mappe demo": ("Mappe demo", "%d", 105, "Mappe con analisi demo completa."),
+        "Round T": ("Round T", "%d", 95, "Round giocati dal lato T sulle mappe con demo."),
+        "Win T %": ("Win T %", "%.1f%%", 105, "Percentuale di round vinti dal lato T."),
+        "Round CT": ("Round CT", "%d", 95, "Round giocati dal lato CT sulle mappe con demo."),
+        "Win CT %": ("Win CT %", "%.1f%%", 105, "Percentuale di round vinti dal lato CT."),
+        "Round 5v4": ("Round 5v4", "%d", 100, "Round in cui la squadra ottiene la prima kill."),
+        "Conversione 5v4 %": ("Conv. 5v4 %", "%.1f%%", 120, "Round vinti dopo aver ottenuto la prima kill."),
+        "Round 4v5": ("Round 4v5", "%d", 100, "Round in cui la squadra subisce la prima morte."),
+        "Recupero 4v5 %": ("Rec. 4v5 %", "%.1f%%", 120, "Round recuperati e vinti dopo aver subito la prima morte."),
+        "Plant A": ("Plant A", "%d", 90, "Piazzamenti bomba sul sito A (lato T)."),
+        "Post-plant A %": ("Post-plant A %", "%.1f%%", 125, "Round vinti da T dopo plant sul sito A."),
+        "Plant B": ("Plant B", "%d", 90, "Piazzamenti bomba sul sito B (lato T)."),
+        "Post-plant B %": ("Post-plant B %", "%.1f%%", 125, "Round vinti da T dopo plant sul sito B."),
+        "Retake tentati": ("Retake", "%d", 90, "Retake tentati dal lato CT."),
+        "Retake %": ("Retake %", "%.1f%%", 105, "Retake vinti dal lato CT / tentati."),
+        "Valore medio equip.": ("Equip. medio $", "$%.0f", 125, "Valore medio equipaggiamento di squadra a inizio round."),
     }
     config = {
         key: st.column_config.NumberColumn(label, format=fmt, width=width, help=help_text)
@@ -232,3 +248,129 @@ def show_records(records, kind="review"):
                 if row.get("action"):
                     st.markdown("**Azione concordata**")
                     st.write(row["action"])
+
+
+def build_radar_heatmap_chart(events_df, map_name, mode="victim", show_vectors=False):
+    """
+    Costruisce una mappa tattica 2D / heatmap in coordinate radar CS2 [0..1024]x[0..1024],
+    con punti di riferimento dei siti (A, B, Mid, Spawn), densità 2D e vettori opzionali.
+    """
+    from projectcs.demos import CS2_RADAR_META, normalize_map_key
+
+    map_key = normalize_map_key(map_name)
+    meta = CS2_RADAR_META.get(map_key, {})
+    x_col = "victim_rx" if mode == "victim" else "attacker_rx"
+    y_col = "victim_ry" if mode == "victim" else "attacker_ry"
+
+    fig = go.Figure()
+    valid = (
+        events_df.dropna(subset=[x_col, y_col]).copy()
+        if events_df is not None and not events_df.empty and x_col in events_df
+        else pd.DataFrame()
+    )
+
+    if len(valid) >= 2:
+        fig.add_trace(
+            go.Histogram2dContour(
+                x=valid[x_col],
+                y=valid[y_col],
+                colorscale=[
+                    [0.0, "rgba(25,25,25,0)"],
+                    [0.25, "rgba(255,118,46,0.22)"],
+                    [0.6, "rgba(255,118,46,0.48)"],
+                    [1.0, "rgba(255,180,140,0.78)"],
+                ],
+                showscale=False,
+                contours=dict(coloring="heatmap", showlines=False),
+                ncontours=14,
+                hoverinfo="skip",
+                name="Densità",
+            )
+        )
+
+    if show_vectors and not valid.empty and "attacker_rx" in valid and "victim_rx" in valid:
+        vec_rows = valid.dropna(subset=["attacker_rx", "attacker_ry", "victim_rx", "victim_ry"])
+        vx_lines, vy_lines = [], []
+        for r in vec_rows.to_dict("records"):
+            vx_lines.extend([r["attacker_rx"], r["victim_rx"], None])
+            vy_lines.extend([r["attacker_ry"], r["victim_ry"], None])
+        if vx_lines:
+            fig.add_trace(
+                go.Scatter(
+                    x=vx_lines,
+                    y=vy_lines,
+                    mode="lines",
+                    line=dict(color="rgba(120,205,232,0.45)", width=1.5, dash="dot"),
+                    hoverinfo="skip",
+                    name="Traiettoria duello",
+                )
+            )
+
+    if not valid.empty:
+        custom = []
+        colors = []
+        for r in valid.to_dict("records"):
+            r_no = int(r["round_no"]) if pd.notna(r.get("round_no")) else "?"
+            v_label = escape(str(r.get("victim_name") or r.get("victim_id") or "—"))
+            a_label = escape(str(r.get("attacker_name") or r.get("attacker_id") or "—"))
+            weapon = escape(str(r.get("weapon") or "arma non specificata"))
+            traded_str = (
+                "Scambiata (trade ≤5s)"
+                if r.get("is_traded") == 1
+                else ("Senza trade" if r.get("is_traded") == 0 else "—")
+            )
+            opening_str = " · Apertura round" if r.get("is_opening") == 1 else ""
+            custom.append([r_no, v_label, a_label, weapon, traded_str + opening_str])
+            colors.append("#77d49a" if r.get("is_traded") == 1 else ACCENT)
+
+        fig.add_trace(
+            go.Scatter(
+                x=valid[x_col],
+                y=valid[y_col],
+                mode="markers",
+                marker=dict(
+                    size=10,
+                    color=colors,
+                    line=dict(color="#101010", width=1.5),
+                    opacity=0.92,
+                ),
+                customdata=custom,
+                hovertemplate=(
+                    "<b>Round %{customdata[0]}</b><br>"
+                    "Vittima: %{customdata[1]}<br>"
+                    "Killer: %{customdata[2]} (%{customdata[3]})<br>"
+                    "%{customdata[4]}<extra></extra>"
+                ),
+                name="Eventi",
+            )
+        )
+
+    for z in meta.get("zones", []):
+        fig.add_annotation(
+            x=z["rx"],
+            y=z["ry"],
+            text=f"<b>{escape(z['name'])}</b>",
+            showarrow=False,
+            font=dict(size=12, color="#d8d8d8"),
+            bgcolor="rgba(16,16,16,0.75)",
+            bordercolor="#555555",
+            borderwidth=1,
+            borderpad=4,
+        )
+
+    fig = style_chart(fig, height=560)
+    fig.update_xaxes(
+        range=[0, 1024],
+        showticklabels=False,
+        title_text=f"Radar {str(map_name).title()} · spazio [0..1024]",
+        constrain="domain",
+    )
+    fig.update_yaxes(
+        range=[1024, 0],
+        showticklabels=False,
+        scaleanchor="x",
+        scaleratio=1,
+        title_text="",
+    )
+    fig.update_layout(margin=dict(l=24, r=24, t=24, b=44), showlegend=False)
+    return fig
