@@ -1,0 +1,79 @@
+
+/* ProjectCS · interfaccia scura con accenti arancioni. */
+[data-testid="stAppViewContainer"] {
+  --pcs-accent: #ff5500;
+  --pcs-pattern-opacity: 0.075;
+  background: #101010;
+  position: relative;
+  isolation: isolate;
+}
+.block-container {
+  max-width: 1640px;
+  padding: 2.25rem 2.5rem 4rem;
+  min-width: 0;
+}
+h1 {font-size: clamp(1.8rem, 3.2vw, 2.7rem) !important; letter-spacing: -.04em; line-height: 1.2 !important;}
+h2 {font-size: 1.55rem !important; letter-spacing: -.02em;}
+h3 {font-size: 1.22rem !important; line-height: 1.4 !important;}
+[data-testid="stMarkdownContainer"] :is(p, li, h1, h2, h3, h4) {overflow-wrap: anywhere;}
+[data-testid="stCaptionContainer"] {color: #bfbfbf; line-height: 1.55;}
+[data-testid="stSidebar"] {background: #171717; border-right: 1px solid #383838;}
+[data-testid="stSidebar"] .block-container {padding-inline: 1.25rem;}
+[data-testid="stMetric"] {
+  background: #1b1b1b;
+  border: 1px solid #414141;
+  border-top: 3px solid #ff762e;
+  border-radius: 12px;
+  padding: 1.1rem 1.2rem;
+  min-height: 120px;
+  min-width: 0;
+}
+[data-testid="stMetricLabel"] {color: #c4c4c4; white-space: normal;}
+[data-testid="stMetricLabel"] p {overflow-wrap: anywhere;}
+[data-testid="stMetricValue"] {color: #f5f5f5; font-size: clamp(1.6rem, 2.5vw, 2.2rem);}
+[data-testid="stVerticalBlockBorderWrapper"] > div {border-color: #414141 !important; border-radius: 14px;}
+[data-testid="stVerticalBlockBorderWrapper"] {background: #191919; border-radius: 14px;}
+[data-testid="stColumn"], [data-testid="stVerticalBlock"], [data-testid="stElementContainer"] {
+  min-width: 0;
+  max-width: 100%;
+}
+[data-testid="stDataFrame"] {max-width: 100%; border: 1px solid #484848; border-radius: 10px;}
+[data-testid="stPlotlyChart"] {max-width: 100%; min-width: 0;}
+[data-testid="stRadio"] [role="radiogroup"] {gap: .5rem; flex-wrap: wrap;}
+[data-testid="stRadio"] label {white-space: normal; overflow-wrap: anywhere; min-width: 0;}
+[data-testid="stRadio"] [role="radiogroup"] label {
+  padding: .35rem .55rem;
+  border-radius: 8px;
+}
+[data-testid="stRadio"] [role="radiogroup"] label:has(input:checked) {background: #392418;}
+[data-testid="stCheckbox"] label {
+  padding: .4rem .55rem;
+  border: 1px solid #5a4132;
+  border-radius: 7px;
+  min-height: 40px;
+  transition: background-color 160ms ease, border-color 160ms ease;
+}
+[data-testid="stCheckbox"] label:has(input:checked) {background: #392418; border-color: #ff762e;}
+[data-testid="stCheckbox"] input {accent-color: #ff762e;}
+[data-testid="stCheckbox"] label:focus-within {outline: 2px solid #ffb38c; outline-offset: 3px;}
+[data-testid="stButton"] button, [data-testid="stLinkButton"] a,
+[data-testid="stDownloadButton"] button {min-height: 42px; white-space: normal;}
+[data-testid="stButton"] button p, [data-testid="stLinkButton"] a p {overflow-wrap: anywhere;}
+.eyebrow {color: #ffb38c; font-size: .72rem; font-weight: 700; letter-spacing: .16em; margin-bottom: .4rem;}
+.pcs-card-title {font-size: 1.1rem; font-weight: 650; color: #f4f4f4; overflow-wrap: anywhere;}
+@media (max-width: 900px) {
+  .block-container {padding: 1.5rem 1rem 3rem;}
+  [data-testid="stHorizontalBlock"] {flex-wrap: wrap; gap: .85rem;}
+  [data-testid="stColumn"] {flex: 1 1 260px !important; width: auto !important;}
+}
+@media (max-width: 540px) {
+  [data-testid="stColumn"] {flex-basis: 100% !important;}
+  [data-testid="stMetric"] {min-height: 100px;}
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-testid="stCheckbox"] label {transition: none;}
+}
+@media (forced-colors: active) {
+  [data-testid="stAppViewContainer"]::before {display: none;}
+}
+

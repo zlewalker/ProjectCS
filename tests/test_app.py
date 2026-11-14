@@ -3,7 +3,7 @@ import os
 from unittest.mock import patch
 from pathlib import Path
 from streamlit.testing.v1 import AppTest
-from fixtures import app_rows
+from fixtures import app_rows, sample_row
 
 APP = str(Path(__file__).resolve().parents[1] / 'streamlit_app.py')
 
@@ -57,6 +57,28 @@ class AppTests(unittest.TestCase):
             self.assertEqual(len(app.sidebar.text_input), 0)
             app.sidebar.radio[0].set_value('Revisione').run()
             self.assertEqual(len(app.text_area), 0)
+
+    def test_analysis_views_and_history_window(self):
+        self.rows.return_value = [
+            sample_row(match_id=f'ui-{i:02}', nickname='Grvpe', roster_count=3)
+            for i in range(25)]
+        app = AppTest.from_file(APP).run(timeout=30)
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(app.slider[0].value, (6, 25))
+        app.slider[0].set_value((1, 10)).run(timeout=30)
+        self.assertEqual(len(app.exception), 0)
+        for view in ['Aperture', 'AWP e trade', 'Utility', 'Clutch', 'Sintesi']:
+            next(control for control in app.radio if control.key == 'overview_stats').set_value(view).run(timeout=30)
+            self.assertEqual(len(app.exception), 0, view)
+
+    def test_long_reviews_render_as_wrapping_cards(self):
+        with patch('projectcs.db.read_records', return_value=[{
+            'kind': 'Da migliorare', 'category': 'Call', 'status': 'Da verificare',
+            'observation': 'Nota molto lunga ' * 200, 'action': 'Azione ' * 100}]):
+            app = AppTest.from_file(APP).run(timeout=30)
+            app.sidebar.radio[0].set_value('Revisione').run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            self.assertTrue(any('Nota molto lunga' in item.value for item in app.markdown))
 
     def test_filters_and_player(self):
         app = AppTest.from_file(APP).run(timeout=30)

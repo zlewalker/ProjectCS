@@ -73,6 +73,9 @@ def normalize_match(match, stats, tracked):
             faction = next((key for key, ids in fallback_rosters.items() if len(ids & member_ids) >= 3), None)
             team_stats = team.get("team_stats", {})
             score_for = number(team_stats.get("Final Score"), integer=True)
+            first_half_score = number(team_stats.get("First Half Score"), integer=True)
+            second_half_score = number(team_stats.get("Second Half Score"), integer=True)
+            overtime_score = number(team_stats.get("Overtime score"), integer=True)
             other = next((t for t in teams if t.get("team_id") != team_id), {})
             score_against = number(other.get("team_stats", {}).get("Final Score"), integer=True)
             played_rounds = rounds
@@ -101,6 +104,33 @@ def normalize_match(match, stats, tracked):
                     kills=number(ps.get("Kills")), deaths=number(ps.get("Deaths")),
                     assists=number(ps.get("Assists")), adr=number(ps.get("ADR")),
                     headshots=number(ps.get("Headshots")),
+                    damage=number(ps.get("Damage")),
+                    first_kills=number(ps.get("First Kills")),
+                    entry_count=number(ps.get("Entry Count")),
+                    entry_wins=number(ps.get("Entry Wins")),
+                    sniper_kills=number(ps.get("Sniper Kills")),
+                    flash_count=number(ps.get("Flash Count")),
+                    flash_successes=number(ps.get("Flash Successes")),
+                    enemies_flashed=number(ps.get("Enemies Flashed")),
+                    utility_count=number(ps.get("Utility Count")),
+                    utility_damage=number(ps.get("Utility Damage")),
+                    utility_enemies=number(ps.get("Utility Enemies")),
+                    clutch_kills=number(ps.get("Clutch Kills")),
+                    clutch_1v1_count=number(ps.get("1v1Count")),
+                    clutch_1v1_wins=number(ps.get("1v1Wins")),
+                    clutch_1v2_count=number(ps.get("1v2Count")),
+                    clutch_1v2_wins=number(ps.get("1v2Wins")),
+                    pistol_kills=number(ps.get("Pistol Kills")),
+                    mvps=number(ps.get("MVPs")),
+                    double_kills=number(ps.get("Double Kills")),
+                    triple_kills=number(ps.get("Triple Kills")),
+                    quadro_kills=number(ps.get("Quadro Kills")),
+                    penta_kills=number(ps.get("Penta Kills")),
+                    traded_deaths=None,
+                    untraded_deaths=None,
+                    first_half_score=first_half_score,
+                    second_half_score=second_half_score,
+                    overtime_score=overtime_score,
                     score_for=score_for, score_against=score_against,
                     source="faceit", coverage="Statistiche match"))
     return rows

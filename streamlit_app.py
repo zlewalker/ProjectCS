@@ -3,36 +3,35 @@ import hmac
 import os
 import sys
 import time
-from datetime import date, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 # Supporta anche Python portable con percorso del progetto esplicito.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pandas as pd
-import plotly.express as px
 import streamlit as st
 
-from projectcs.config import NAMES, ROSTER
-from projectcs.data import load_data, map_summary, player_summary, summary, team_maps, using_snapshot
-from projectcs.db import (add_objective, add_review, read_records,
-                          set_objective_status)
+from projectcs.config import NAMES, PRIORITY_MAPS, ROSTER
+from projectcs.data import (
+    lineup_summary,
+    load_data,
+    map_summary,
+    summary,
+    team_maps,
+    using_snapshot,
+)
+from projectcs import db as db_module
+from projectcs.ui import (
+    CHART_CONFIG, build_map_chart, build_trend_chart, metric_value,
+    player_view, show_players, show_records, show_table, trend_data,
+)
 
 st.set_page_config(page_title="ProjectCS · Team intelligence", page_icon="◈", layout="wide")
-st.markdown("""
-<style>
-.block-container {max-width:1480px;padding-top:2.2rem;padding-bottom:3rem}
-h1 {letter-spacing:-1.6px;font-weight:750!important}
-h2,h3 {letter-spacing:-.5px}
-[data-testid="stMetric"] {background:#141c26;border:1px solid #25303d;border-radius:12px;padding:18px}
-[data-testid="stMetricLabel"] {color:#aab6c5}
-[data-testid="stMetricValue"] {color:#e8edf3}
-[data-testid="stSidebar"] {border-right:1px solid #25303d}
-.eyebrow {color:#c8f36b;letter-spacing:3px;font-size:12px;font-weight:700}
-.hero-sub {color:#9baabe;font-size:16px;margin-top:-8px;margin-bottom:26px}
-.section-label {color:#9baabe;font-size:12px;letter-spacing:2px;margin:20px 0 10px}
-</style>
-""", unsafe_allow_html=True)
+st.markdown(
+    "<style>" + (Path(__file__).resolve().parent / "assets" / "dashboard.css").read_text(encoding="utf-8") + "</style>",
+    unsafe_allow_html=True,
+)
 
 def secret(name):
     value = os.environ.get(name)
@@ -42,6 +41,7 @@ def secret(name):
         return st.secrets.get(name, "")
     except FileNotFoundError:
         return ""
+
 
 def owner_access():
     if using_snapshot():
@@ -70,60 +70,10 @@ def owner_access():
                 st.error("Password non valida.")
     return False
 
-def style_chart(fig):
-    fig.update_layout(
-        template='plotly_dark', height=390,
-        paper_bgcolor='#121b27', plot_bgcolor='#121b27',
-        font=dict(family='Arial, sans-serif', size=15, color='#edf3fc'),
-        margin=dict(l=24, r=30, t=28, b=46),
-        colorway=['#c8f36b', '#73d5f3', '#ac94e8', '#f3b66b', '#e67f88'],
-        legend_title_text='',
-        hoverlabel=dict(bgcolor='#25364b', bordercolor='#698098', font_size=15),
-        modebar=dict(bgcolor='#121b27', color='#b6c7dc'))
-    fig.update_xaxes(gridcolor='#314056', zeroline=False,
-                     tickfont=dict(size=14, color='#e5edf8'), title_font=dict(size=14))
-    fig.update_yaxes(gridcolor='#314056', zeroline=False,
-                     tickfont=dict(size=15, color='#edf3fc'), title_font=dict(size=14))
-    return fig
-
-def metric_value(value, suffix=""):
-    return "—" if value is None or pd.isna(value) else f"{value:.1f}{suffix}"
-
-def show_table(df):
-    numeric = {
-        'Mappe': st.column_config.NumberColumn('Mappe', format='%d', width='small'),
-        'K/D': st.column_config.NumberColumn('K/D', format='%.2f', help='Kill totali divise per morti totali.', width='small'),
-        'KPR': st.column_config.NumberColumn('KPR', format='%.2f', help='Kill per round giocato.', width='small'),
-        'ADR': st.column_config.NumberColumn('ADR', format='%.1f', help='Danno medio per round, pesato sui round disponibili.', width='small'),
-        'DPR': st.column_config.NumberColumn('DPR', format='%.2f', help='Morti per round giocato. Da interpretare nel contesto del ruolo.', width='small'),
-        'Vittorie %': st.column_config.NumberColumn('Win %', format='%.1f%%', help='Percentuale di vittorie nel campione.', width='small'),
-        'Differenza round': st.column_config.NumberColumn('Δ round', format='%+d', width='small'),
-        'Round': st.column_config.NumberColumn('Round', format='%d', width='small'),
-        'Giocatore': st.column_config.TextColumn('Giocatore', width='medium'),
-        'ID partita': st.column_config.TextColumn('ID partita', width='large'),
-    }
-    styled = df.style.apply(
-        lambda row: ['background-color: ' + ('#131f2e' if row.name % 2 == 0 else '#1c2a3d') + '; color: #eff5ff'] * len(row),
-        axis=1)
-    if 'Giocatore' in df.columns:
-        styled = styled.set_properties(subset=['Giocatore'], **{'font-weight': 'bold', 'color': '#c8f36b'})
-    height = min(650, max(140, (len(df) + 1) * 46 + 8))
-    st.dataframe(styled, hide_index=True, width='stretch', height=height,
-                 row_height=44, column_config={key: value for key, value in numeric.items() if key in df.columns})
-
-def show_players(df, compact=False):
-    table = player_summary(df)
-    if table.empty:
-        st.info('Nessun giocatore in questo campione.')
-        return
-    table = table[['Giocatore', 'Mappe', 'K/D', 'KPR', 'ADR', 'DPR', 'Vittorie %']]
-    if compact:
-        table = table.drop(columns=['Giocatore'])
-    show_table(table)
 
 with st.sidebar:
     st.markdown("## ◈ ProjectCS")
-    st.caption("TEAM INTELLIGENCE / PROTOTIPO 0.1")
+    st.caption("TEAM PERFORMANCE LAB")
     page = st.radio("Navigazione", ["Panoramica", "Giocatori", "Partite", "Revisione", "Allenamento"],
                     label_visibility="collapsed")
     st.divider()
@@ -137,6 +87,14 @@ with st.sidebar:
 data = load_data()
 st.markdown('<div class="eyebrow">PROJECTCS / PERFORMANCE LAB</div>', unsafe_allow_html=True)
 st.title(page)
+descriptions = {
+    "Panoramica": "Il rendimento del core, una mappa alla volta.",
+    "Giocatori": "Contributi individuali, contesto del ruolo e confronto dentro/fuori.",
+    "Partite": "Risultati, composizioni e dettagli delle mappe giocate.",
+    "Revisione": "Cosa ripetere, cosa verificare e cosa migliorare.",
+    "Allenamento": "Obiettivi concreti per la prossima sessione.",
+}
+st.caption(descriptions[page])
 if data.empty and page not in {"Revisione", "Allenamento"}:
     st.info("L'archivio è vuoto. Le partite appariranno dopo il prossimo aggiornamento.")
     st.stop()
@@ -149,11 +107,17 @@ if not data.empty:
         minimum = data["date"].min().date()
         maximum = data["date"].max().date()
         interval = c1.date_input("Periodo", value=(minimum, maximum), min_value=minimum, max_value=max(maximum, minimum + timedelta(days=1)))
-        selected_maps = c2.multiselect("Mappe", sorted(data["map"].unique()), default=sorted(data["map"].unique()))
+        all_maps = sorted(data["map"].unique())
+        only_priority = c2.checkbox("Solo map pool del team", value=False, help="Ancient · Anubis · Dust2")
+        default_maps = [m for m in all_maps if m in PRIORITY_MAPS] if only_priority else all_maps
+        selected_maps = c2.multiselect("Mappe", all_maps, default=default_maps or all_maps)
         composition = c3.selectbox("Composizione nella stessa squadra",
                                   ["Core · almeno 3", "Quintetto · 5", "Gruppo · 4", "Gruppo · 3", "Fuori dal core · 1–2", "Tutte"])
         if len(interval) == 2:
             base = data[(data["date"].dt.date >= interval[0]) & (data["date"].dt.date <= interval[1])]
+        elif len(interval) == 1:
+            base = data[data["date"].dt.date >= interval[0]]
+            c1.caption("Seleziona la data finale per chiudere l'intervallo.")
         base = base[base["map"].isin(selected_maps)]
         filtered = base.copy()
         if composition == "Core · almeno 3":
@@ -169,7 +133,6 @@ if not data.empty:
     st.caption(f"{len(team_maps(filtered))} mappe-squadra · {filtered['match_id'].nunique()} partite uniche · {len(filtered)} presenze giocatore. Membri su squadre opposte sono separati.")
 
 if page == "Panoramica":
-    st.markdown('<div class="hero-sub">Dal risultato della partita alla prossima sessione di allenamento.</div>', unsafe_allow_html=True)
     if filtered.empty:
         st.info("Nessuna partita corrisponde ai filtri.")
         st.stop()
@@ -178,45 +141,35 @@ if page == "Panoramica":
     a.metric("Mappe nel campione", totals["games"])
     b.metric("Vittorie", metric_value(totals["winrate"], "%"))
     c.metric("Round osservati", totals["rounds"])
-    d.metric("Copertura demo", "0%")
+    map_rows = team_maps(filtered)
+    round_delta = (map_rows["score_for"] - map_rows["score_against"]).sum(min_count=1)
+    d.metric("Differenza round", "—" if pd.isna(round_delta) else f"{round_delta:+.0f}")
     st.caption("Un'unità del campione è una mappa giocata da una squadra con almeno un membro. I round sono conteggiati una volta per squadra.")
-    left, right = st.columns([1.15, 1])
     maps = map_summary(filtered)
-    with left, st.container(border=True):
+    with st.container(border=True):
         st.subheader("Map pool")
-        fig = px.bar(maps, x='Vittorie %', y='Mappa', orientation='h',
-                     text='Vittorie %', custom_data=['Mappe', 'Round', 'Differenza round'],
-                     color_discrete_sequence=['#c8f36b'], range_x=[0, 100],
-                     labels={'Vittorie %': 'Vittorie (%)', 'Mappa': ''})
-        fig.update_traces(
-            texttemplate='%{x:.0f}%', textposition='auto',
-            textfont=dict(size=17, color='#0b1016'),
-            marker_line_width=0,
-            hovertemplate='<b>%{y}</b><br>Vittorie: %{x:.1f}%<br>Campione: %{customdata[0]} mappe<br>Round: %{customdata[1]}<br>Δ round: %{customdata[2]}<extra></extra>')
-        fig.update_yaxes(tickmode='array', tickvals=maps['Mappa'].tolist(),
-                         ticktext=[f"{row['Mappa']}  ·  {row['Mappe']}" for row in maps.to_dict('records')])
-        fig.update_xaxes(tickvals=[0, 25, 50, 75, 100], ticksuffix='%')
-        fig.add_vline(x=50, line_dash='dot', line_color='#8ca0b9', line_width=1)
-        st.plotly_chart(style_chart(fig), width='stretch', theme=None, config={'displaylogo': False})
-        st.caption("Accanto alla mappa: numero di mappe giocate. Linea tratteggiata: 50% di vittorie.")
-    with right, st.container(border=True):
-        st.subheader("Andamento")
-        games = team_maps(filtered).sort_values("date").copy()
-        games["Vittorie ultime 10 mappe %"] = games["won"].rolling(10, min_periods=1).mean() * 100
-        games['Campione'] = games['won'].rolling(10, min_periods=1).count()
-        fig = px.line(games, x='date', y='Vittorie ultime 10 mappe %', markers=True,
-                      custom_data=['Campione', 'map', 'roster_count'],
-                      color_discrete_sequence=['#73d5f3'], range_y=[0, 100],
-                      labels={'date': '', 'Vittorie ultime 10 mappe %': 'Vittorie (%)'})
-        fig.update_traces(
-            line=dict(width=3), marker=dict(size=7, line=dict(width=1, color='#121b27')),
-            fill='tozeroy', fillcolor='rgba(115,213,243,0.09)',
-            hovertemplate='<b>%{x|%d/%m/%Y}</b><br>Vittorie: %{y:.1f}%<br>Finestra: %{customdata[0]} mappe<br>%{customdata[1]} · %{customdata[2]} membri<extra></extra>')
-        fig.update_yaxes(tickvals=[0, 25, 50, 75, 100], ticksuffix='%')
-        fig.update_xaxes(tickformat='%d/%m', nticks=6)
-        fig.add_hline(y=50, line_dash='dot', line_color='#8ca0b9', line_width=1)
-        st.plotly_chart(style_chart(fig), width='stretch', theme=None, config={'displaylogo': False})
-        st.caption("Media mobile fino a 10 mappe; le prime osservazioni hanno un campione ridotto.")
+        st.caption("Vittorie per mappa · campione indicato accanto al nome")
+        st.plotly_chart(build_map_chart(maps), width="stretch", theme=None, config=CHART_CONFIG)
+        st.caption("La linea tratteggiata indica il 50% di vittorie. I risultati non sono corretti per forza degli avversari.")
+
+    with st.container(border=True):
+        st.subheader("Andamento del core")
+        st.caption("Un punto per mappa, con spazio uniforme anche nelle sessioni più lunghe.")
+        games = trend_data(filtered)
+        count = len(games)
+        if count > 1:
+            start, end = st.slider(
+                "Partite visibili", min_value=1, max_value=count,
+                value=(max(1, count - 19), count),
+                help="Sposta gli estremi per esplorare una parte dello storico. Le medie conservano il contesto delle partite precedenti.")
+        else:
+            start, end = 1, 1
+        adaptive = st.toggle("Adatta la scala verticale", value=False,
+                             help="Restringe la scala ai valori visibili mantenendo il riferimento del 50%.")
+        st.plotly_chart(build_trend_chart(games, start, end, adaptive),
+                        width="stretch", theme=None, config=CHART_CONFIG)
+        st.caption(f"Partite {start}–{end} di {count} · media mobile sulle ultime 10 mappe disponibili. "
+                   "La distanza orizzontale rappresenta l'ordine delle partite, non i giorni trascorsi.")
     st.subheader("Segnali da approfondire")
     for row in maps.to_dict("records"):
         if row["Mappe"] < 10:
@@ -226,11 +179,15 @@ if page == "Panoramica":
         else:
             st.caption(f"{row['Mappa']} · {row['Mappe']} mappe, {row['Vittorie %']:.0f}% di vittorie.")
     st.subheader("Contributi individuali")
-    show_players(filtered)
-    st.caption("ADR: danno medio per round · KPR: kill per round · DPR: morti per round. I rapporti sono calcolati sui conteggi disponibili.")
-    with st.expander("Analisi previste dalle demo"):
-        st.write("Aperture · trade a 5 secondi · conversione 5v4/4v5 · post-plant · retake · economia · utility.")
-        st.info("Non ancora calcolate nel prototipo. Posizioni, movimenti e heatmap sono esclusi dalla v0.1.")
+    player_view(filtered, key="overview_stats")
+    st.caption("Le percentuali usano i tentativi disponibili. Passa sulle intestazioni per leggere le definizioni.")
+    with st.expander("Sinergie e combinazioni del core (3+ membri)"):
+        st.caption("Rispetta tutti i filtri attivi (periodo, mappe e composizione) per le formazioni con almeno 3 membri del roster.")
+        lineups = lineup_summary(filtered, min_members=3)
+        if lineups.empty:
+            st.info("Nessuna combinazione con almeno 3 membri nel campione filtrato attuale.")
+        else:
+            show_table(lineups)
 
 elif page == "Giocatori":
     selected = st.selectbox("Giocatore", NAMES)
@@ -238,7 +195,7 @@ elif page == "Giocatori":
     st.caption(f"Ruolo provvisorio · {role}")
     own = filtered[filtered["nickname"] == selected]
     st.subheader("Prestazione nel campione selezionato")
-    show_players(own)
+    player_view(own, key="player_stats")
     st.subheader("Dentro e fuori dal core")
     st.caption("Questo confronto mantiene periodo e mappe, ma ignora il filtro composizione per mostrare entrambi i gruppi.")
     player_base = base[base["nickname"] == selected]
@@ -254,6 +211,10 @@ elif page == "Giocatori":
     if not own.empty:
         st.subheader("Dettaglio per mappa")
         show_table(map_summary(own).round(1))
+        st.caption("I valori 1° half e 2° half indicano la media di round vinti nei rispettivi tempi regolamentari (non distinguono il lato T/CT e il 2° half può avere meno round giocati).")
+    st.subheader("Confronto ruoli nel campione filtrato")
+    st.caption("Utile per confrontare i candidati AWP (-Zoen- e LEWALKER), l'Entry (Senshe) e il supporto/clutch (oSpEcTeRo e Grvpe).")
+    player_view(filtered, key="role_stats")
     st.subheader("Roster")
     show_table(pd.DataFrame(ROSTER).rename(columns={"nickname": "Giocatore", "role": "Ruolo provvisorio"}))
     for member in ROSTER:
@@ -264,17 +225,26 @@ elif page == "Partite":
     if games.empty:
         st.info("Nessuna partita corrisponde ai filtri.")
         st.stop()
-    display = games[["date", "map", "roster_count", "won", "score_for", "score_against", "coverage", "match_id"]].copy()
-    display["date"] = display["date"].dt.strftime("%d/%m/%Y")
-    display["won"] = display["won"].map({1: "Vittoria", 0: "Sconfitta"}).fillna("Non disponibile")
-    display.columns = ["Data", "Mappa", "Membri", "Esito", "Round vinti", "Round persi", "Dati disponibili", "ID partita"]
+    display = pd.DataFrame({
+        "Data": games["date"].dt.strftime("%d/%m/%Y"),
+        "Mappa": games["map"].str.title(),
+        "Membri": games["roster_count"],
+        "Esito": games["won"].map({1: "Vittoria", 0: "Sconfitta"}).fillna("Non disponibile"),
+        "Punteggio": [
+            f"{int(a)} : {int(b)}" if pd.notna(a) and pd.notna(b) else "—"
+            for a, b in zip(games["score_for"], games["score_against"])],
+        "Round 1° half": games["first_half_score"],
+        "Round 2° half": games["second_half_score"],
+        "Matchroom": ["https://www.faceit.com/en/cs2/room/" + value for value in games["match_id"]],
+    })
     show_table(display)
+    st.caption("I due tempi riportano i round vinti; non distinguono il lato T/CT. Gli ID completi restano nell'esportazione CSV.")
     options = list(games.itertuples())
     chosen = st.selectbox("Apri una mappa-squadra", range(len(options)),
-                          format_func=lambda i: f"{options[i].date:%d/%m} · {options[i].map.title()} · {options[i].roster_count} membri · {options[i].match_id}")
+                          format_func=lambda i: f"{options[i].date:%d/%m %H:%M} · {options[i].map.title()} · {options[i].roster_count} membri")
     game = options[chosen]
     detail = filtered[(filtered["match_id"] == game.match_id) & (filtered["map_no"] == game.map_no) & (filtered["team_id"] == game.team_id)]
-    show_players(detail)
+    player_view(detail, key="match_stats")
     st.link_button("Apri la matchroom FACEIT", f"https://www.faceit.com/en/cs2/room/{game.match_id}")
     st.download_button("Esporta il campione CSV", filtered.to_csv(index=False).encode("utf-8-sig"),
                        file_name="projectcs-campione.csv", mime="text/csv")
@@ -282,9 +252,9 @@ elif page == "Partite":
 
 elif page == "Revisione":
     st.write("Raccogli ciò che ha funzionato e ciò che va verificato. Una nota può riguardare l'intera partita oppure un round.")
-    notes = read_records("reviews")
+    notes = db_module.read_records("reviews")
     if notes:
-        show_table(pd.DataFrame(notes))
+        show_records(notes, kind="review")
     else:
         st.info("Ancora nessuna nota. Puoi iniziare dal confronto a fine partita.")
     if owner:
@@ -304,8 +274,8 @@ elif page == "Revisione":
             if not observation.strip():
                 st.error("Inserisci un'osservazione.")
             else:
-                add_review(None if match == "Nota generale" else match, round_no or None,
-                           kind, category, observation.strip(), status, action.strip())
+                db_module.add_review(None if match == "Nota generale" else match, round_no or None,
+                                     kind, category, observation.strip(), status, action.strip())
                 st.rerun()
     else:
         st.caption("Solo il proprietario può aggiungere osservazioni.")
@@ -313,16 +283,16 @@ elif page == "Revisione":
 elif page == "Allenamento":
     st.write("Trasforma un'osservazione verificata in un obiettivo e controllalo nelle sessioni successive.")
     st.caption("Nessuna diagnosi automatica della comunicazione: le priorità vengono concordate attraverso la revisione.")
-    goals = read_records("objectives")
+    goals = db_module.read_records("objectives")
     if goals:
-        show_table(pd.DataFrame(goals))
+        show_records(goals, kind="objective")
     else:
         st.info("Nessun obiettivo impostato.")
     if owner and goals:
         goal = st.selectbox("Aggiorna obiettivo", goals, format_func=lambda r: f"#{r['id']} · {r['title']}")
         status = st.selectbox("Nuovo stato", ["Da allenare", "In corso", "Da verificare", "Completato"])
         if st.button("Aggiorna stato"):
-            set_objective_status(goal["id"], status)
+            db_module.set_objective_status(goal["id"], status)
             st.rerun()
     if owner:
         with st.form("objective"):
@@ -332,8 +302,7 @@ elif page == "Allenamento":
             submit = st.form_submit_button("Aggiungi obiettivo")
         if submit:
             if title.strip() and action.strip():
-                add_objective(title.strip(), action.strip(), verification.strip())
+                db_module.add_objective(title.strip(), action.strip(), verification.strip())
                 st.rerun()
             else:
                 st.error("Inserisci titolo e azione.")
-
