@@ -13,6 +13,8 @@ TEXT = "#f4f4f4"
 MUTED = "#c2c2c2"
 CHART_CONFIG = {"displaylogo": False, "scrollZoom": False,
                 "modeBarButtonsToRemove": ["select2d", "lasso2d"]}
+RADAR_CHART_CONFIG = {"displaylogo": False, "scrollZoom": True,
+                      "modeBarButtonsToRemove": ["select2d", "lasso2d"]}
 
 VIEWS = {
     "Sintesi": ["Giocatore", "Mappe", "ADR", "K/D", "KPR", "DPR", "HS %", "Vittorie %"],
@@ -250,15 +252,40 @@ def show_records(records, kind="review"):
                     st.write(row["action"])
 
 
+def _load_radar_image(map_key):
+    """Carica il radar CS2 ufficiale 1024x1024 da assets/radars/ se disponibile."""
+    from projectcs.config import ROOT
+
+    if not map_key:
+        return None
+    candidates = [
+        ROOT / "assets" / "radars" / f"de_{map_key}_radar_psd.png",
+        ROOT / "assets" / "radars" / f"{map_key}_radar_psd.png",
+        ROOT / "assets" / "radars" / f"de_{map_key}.png",
+    ]
+    for path in candidates:
+        if path.exists():
+            try:
+                from PIL import Image
+
+                with Image.open(path) as im:
+                    return im.convert("RGBA")
+            except Exception:
+                return None
+    return None
+
+
 def build_radar_heatmap_chart(events_df, map_name, mode="victim", show_vectors=False):
     """
     Costruisce una mappa tattica 2D / heatmap in coordinate radar CS2 [0..1024]x[0..1024],
-    con punti di riferimento dei siti (A, B, Mid, Spawn), densità 2D e vettori opzionali.
+    con immagine radar ufficiale CS2 in background, densità 2D, vettori opzionali e
+    navigazione interattiva (zoom con rotella + pan clicca-e-trascina).
     """
     from projectcs.demos import CS2_RADAR_META, normalize_map_key
 
     map_key = normalize_map_key(map_name)
     meta = CS2_RADAR_META.get(map_key, {})
+    radar_img = _load_radar_image(map_key)
     x_col = "victim_rx" if mode == "victim" else "attacker_rx"
     y_col = "victim_ry" if mode == "victim" else "attacker_ry"
 
@@ -274,15 +301,20 @@ def build_radar_heatmap_chart(events_df, map_name, mode="victim", show_vectors=F
             go.Histogram2dContour(
                 x=valid[x_col],
                 y=valid[y_col],
+                autobinx=False,
+                autobiny=False,
+                xbins=dict(start=0, end=1024, size=24),
+                ybins=dict(start=0, end=1024, size=24),
                 colorscale=[
-                    [0.0, "rgba(25,25,25,0)"],
-                    [0.25, "rgba(255,118,46,0.22)"],
-                    [0.6, "rgba(255,118,46,0.48)"],
-                    [1.0, "rgba(255,180,140,0.78)"],
+                    [0.0, "rgba(0,0,0,0)"],
+                    [0.18, "rgba(255,140,0,0.22)"],
+                    [0.45, "rgba(255,95,20,0.45)"],
+                    [0.75, "rgba(255,65,0,0.68)"],
+                    [1.0, "rgba(255,235,140,0.88)"],
                 ],
                 showscale=False,
                 contours=dict(coloring="heatmap", showlines=False),
-                ncontours=14,
+                ncontours=18,
                 hoverinfo="skip",
                 name="Densità",
             )
@@ -300,7 +332,7 @@ def build_radar_heatmap_chart(events_df, map_name, mode="victim", show_vectors=F
                     x=vx_lines,
                     y=vy_lines,
                     mode="lines",
-                    line=dict(color="rgba(120,205,232,0.45)", width=1.5, dash="dot"),
+                    line=dict(color="rgba(120,205,232,0.55)", width=1.6, dash="dot"),
                     hoverinfo="skip",
                     name="Traiettoria duello",
                 )
@@ -345,32 +377,59 @@ def build_radar_heatmap_chart(events_df, map_name, mode="victim", show_vectors=F
             )
         )
 
-    for z in meta.get("zones", []):
-        fig.add_annotation(
-            x=z["rx"],
-            y=z["ry"],
-            text=f"<b>{escape(z['name'])}</b>",
-            showarrow=False,
-            font=dict(size=12, color="#d8d8d8"),
-            bgcolor="rgba(16,16,16,0.75)",
-            bordercolor="#555555",
-            borderwidth=1,
-            borderpad=4,
+    if radar_img is not None:
+        fig.add_layout_image(
+            dict(
+                source=radar_img,
+                xref="x",
+                yref="y",
+                x=0,
+                y=0,
+                sizex=1024,
+                sizey=1024,
+                sizing="stretch",
+                opacity=0.92,
+                layer="below",
+            )
         )
+    else:
+        for z in meta.get("zones", []):
+            fig.add_annotation(
+                x=z["rx"],
+                y=z["ry"],
+                text=f"<b>{escape(z['name'])}</b>",
+                showarrow=False,
+                font=dict(size=12, color="#d8d8d8"),
+                bgcolor="rgba(16,16,16,0.75)",
+                bordercolor="#555555",
+                borderwidth=1,
+                borderpad=4,
+            )
 
-    fig = style_chart(fig, height=560)
+    fig = style_chart(fig, height=680)
     fig.update_xaxes(
         range=[0, 1024],
         showticklabels=False,
+        showgrid=False,
+        zeroline=False,
         title_text=f"Radar {str(map_name).title()} · spazio [0..1024]",
         constrain="domain",
     )
     fig.update_yaxes(
         range=[1024, 0],
         showticklabels=False,
+        showgrid=False,
+        zeroline=False,
         scaleanchor="x",
         scaleratio=1,
         title_text="",
     )
-    fig.update_layout(margin=dict(l=24, r=24, t=24, b=44), showlegend=False)
+    fig.update_layout(
+        margin=dict(l=16, r=16, t=20, b=40),
+        showlegend=False,
+        dragmode="pan",
+        hovermode="closest",
+        paper_bgcolor="#121417",
+        plot_bgcolor="#121417",
+    )
     return fig

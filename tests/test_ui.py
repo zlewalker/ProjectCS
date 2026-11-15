@@ -2,7 +2,13 @@ import unittest
 import pandas as pd
 from fixtures import sample_row
 from projectcs.data import frame
-from projectcs.ui import build_map_chart, build_trend_chart, trend_data
+from projectcs.ui import (
+    RADAR_CHART_CONFIG,
+    build_map_chart,
+    build_radar_heatmap_chart,
+    build_trend_chart,
+    trend_data,
+)
 
 class ChartTests(unittest.TestCase):
     def test_same_day_matches_have_distinct_even_positions(self):
@@ -37,6 +43,40 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(list(fig.data[0].textposition), ["inside", "outside"])
         self.assertEqual(fig.data[0].outsidetextfont.color, "#f4f4f4")
         self.assertFalse(fig.data[0].cliponaxis)
+
+    def test_radar_heatmap_has_map_image_and_pan_zoom(self):
+        self.assertTrue(RADAR_CHART_CONFIG["scrollZoom"])
+        df = pd.DataFrame([
+            {
+                "round_no": 1,
+                "victim_name": "LEWALKER",
+                "attacker_name": "Enemy",
+                "weapon": "ak47",
+                "is_traded": 0,
+                "is_opening": 1,
+                "victim_rx": 480.0,
+                "victim_ry": 320.0,
+                "attacker_rx": 540.0,
+                "attacker_ry": 260.0,
+            },
+            {
+                "round_no": 2,
+                "victim_name": "Grvpe",
+                "attacker_name": "Enemy",
+                "weapon": "awp",
+                "is_traded": 1,
+                "is_opening": 0,
+                "victim_rx": 510.0,
+                "victim_ry": 350.0,
+                "attacker_rx": 600.0,
+                "attacker_ry": 210.0,
+            },
+        ])
+        fig = build_radar_heatmap_chart(df, "dust2", mode="victim", show_vectors=True)
+        self.assertEqual(fig.layout.dragmode, "pan")
+        self.assertEqual(len(fig.layout.images), 1)
+        self.assertEqual(list(fig.layout.xaxis.range), [0, 1024])
+        self.assertEqual(list(fig.layout.yaxis.range), [1024, 0])
 
 if __name__ == "__main__":
     unittest.main()

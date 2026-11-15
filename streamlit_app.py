@@ -30,7 +30,7 @@ from projectcs.data import (
 from projectcs import db as db_module
 from projectcs import demos as demos_module
 from projectcs.ui import (
-    CHART_CONFIG, build_map_chart, build_radar_heatmap_chart, build_trend_chart,
+    CHART_CONFIG, RADAR_CHART_CONFIG, build_map_chart, build_radar_heatmap_chart, build_trend_chart,
     metric_value, player_view, show_players, show_records, show_table, trend_data,
 )
 
@@ -384,8 +384,9 @@ elif page == "Demo & Heatmap":
             build_radar_heatmap_chart(map_ev, hm_map, mode=coord_mode, show_vectors=show_vec),
             width="stretch",
             theme=None,
-            config=CHART_CONFIG,
+            config=RADAR_CHART_CONFIG,
         )
+        st.caption("Usa la rotella del mouse per fare zoom e clicca + trascina per spostarti sulla mappa (doppio clic per ripristinare la vista).")
         if map_ev.empty or map_ev.dropna(subset=["victim_rx", "victim_ry"]).empty:
             st.caption(
                 f"Nessuna coordinata posizionale demo presente per {str(hm_map).title()} con i filtri selezionati. "
