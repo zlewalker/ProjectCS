@@ -714,6 +714,7 @@ def parse_raw_dem_with_demoparser2(dem_path, match_id, map_no, db_path=DB_PATH, 
         return int(t) if t is not None else None
 
     round_winners = {}
+    round_end_ticks = {}
     match_end_tick = 0
     if "round_end" not in parse_errors and round_end_df is not None:
         valid_re_rows = []
@@ -739,8 +740,10 @@ def parse_raw_dem_with_demoparser2(dem_path, match_id, map_no, db_path=DB_PATH, 
         for row, r_tick, w_side in valid_re_rows:
             r_no = int(row.get("total_rounds_played", 0)) + re_offset
             round_winners[r_no] = (w_side, row.get("reason"))
-            if r_tick is not None and r_tick > match_end_tick:
-                match_end_tick = r_tick
+            if r_tick is not None:
+                round_end_ticks[r_no] = r_tick
+                if r_tick > match_end_tick:
+                    match_end_tick = r_tick
 
     events = []
     if deaths_df is not None:
@@ -756,6 +759,8 @@ def parse_raw_dem_with_demoparser2(dem_path, match_id, map_no, db_path=DB_PATH, 
             a_steam = _clean_str(row.get("attacker_steamid"))
             v_name = _clean_str(row.get("user_name"))
             a_name = _clean_str(row.get("attacker_name"))
+            if not v_steam and not v_name:
+                continue
 
             v_info = steam_to_player.get(v_steam) or name_to_player.get(v_name.casefold())
             a_info = steam_to_player.get(a_steam) or name_to_player.get(a_name.casefold())
@@ -843,6 +848,7 @@ def parse_raw_dem_with_demoparser2(dem_path, match_id, map_no, db_path=DB_PATH, 
                     exploded_rounds.add(int(row.get("total_rounds_played", 0)) + 1)
 
     equip_by_round_side = {}
+    freeze_end_ticks = {}
     if freeze_end_df is not None:
         tick_to_round = {}
         raw_equip_lists = {}
@@ -853,7 +859,9 @@ def parse_raw_dem_with_demoparser2(dem_path, match_id, map_no, db_path=DB_PATH, 
                 continue
             r_no = int(row.get("total_rounds_played", idx)) + 1
             if row.get("tick") is not None:
-                tick_to_round[int(row["tick"])] = r_no
+                fe_tick = int(row["tick"])
+                tick_to_round[fe_tick] = r_no
+                freeze_end_ticks[r_no] = fe_tick
             if has_inline_equip:
                 t_num = row.get("user_team_num") or row.get("team_num")
                 s_key = "T" if t_num == 2 else ("CT" if t_num == 3 else None)
@@ -887,6 +895,20 @@ def parse_raw_dem_with_demoparser2(dem_path, match_id, map_no, db_path=DB_PATH, 
             if k not in invalid_equip_keys and len(vals) == required_players:
                 equip_by_round_side[k] = sum(vals)
 
+    # Rimuove le morti ambientali ('world') avvenute in freeze-time / cambio lato prima di round_freeze_end
+    if freeze_end_ticks:
+        events = [
+            ev for ev in events
+            if not (
+                ev.get("weapon") == "world"
+                and ev.get("tick") is not None
+                and ev["tick"] < freeze_end_ticks.get(int(ev["round_no"]), 0)
+            )
+        ]
+        deaths_by_round = {}
+        for ev in events:
+            deaths_by_round.setdefault(int(ev["round_no"]), []).append(ev)
+
     all_round_nos = sorted(set(deaths_by_round) | set(round_winners) | set(plants_by_round))
     target_teams = tracked_teams or [None]
     rounds = []
@@ -894,7 +916,10 @@ def parse_raw_dem_with_demoparser2(dem_path, match_id, map_no, db_path=DB_PATH, 
     for team_id in target_teams:
         r1_side = None
         for r_no in all_round_nos:
+            fe_t = freeze_end_ticks.get(r_no, 0)
             for ev in deaths_by_round.get(r_no, []):
+                if fe_t and ev.get("tick", 0) < fe_t:
+                    continue
                 if team_id and ev.get("victim_team") == team_id and ev.get("victim_side") in {"T", "CT"}:
                     r1_side = ev["victim_side"] if r_no <= 12 else ("CT" if ev["victim_side"] == "T" else "T")
                     break
@@ -908,8 +933,11 @@ def parse_raw_dem_with_demoparser2(dem_path, match_id, map_no, db_path=DB_PATH, 
 
         for r_no in all_round_nos:
             r_evs = sorted(deaths_by_round.get(r_no, []), key=lambda e: (e.get("tick", 0), e.get("time_sec", 0.0)))
+            fe_t = freeze_end_ticks.get(r_no, 0)
             side = None
             for ev in r_evs:
+                if fe_t and ev.get("tick", 0) < fe_t:
+                    continue
                 if team_id and ev.get("victim_team") == team_id and ev.get("victim_side") in {"T", "CT"}:
                     side = ev["victim_side"]
                     break

@@ -615,11 +615,10 @@ def _validate_and_prepare_demo_trades(conn, match_id, map_no, events, window_sec
                         if pid and raw_deaths is not None:
                             exp_d = int(float(raw_deaths))
                             p_counts = trade_counts.get(pid, {"traded_deaths": 0, "untraded_deaths": 0})
-                            if (
-                                p_counts["traded_deaths"] is None
-                                or p_counts["untraded_deaths"] is None
-                                or (p_counts["traded_deaths"] + p_counts["untraded_deaths"]) != exp_d
-                            ):
+                            if p_counts["traded_deaths"] is None or p_counts["untraded_deaths"] is None:
+                                return {"status": "incomplete", "updated": 0}
+                            tot_d = p_counts["traded_deaths"] + p_counts["untraded_deaths"]
+                            if (pid in tracked_pids and tot_d != exp_d) or (pid not in tracked_pids and tot_d < exp_d):
                                 return {"status": "incomplete", "updated": 0}
         except (ValueError, TypeError, KeyError):
             pass
