@@ -19,6 +19,14 @@ h3 {font-size: 1.22rem !important; line-height: 1.4 !important;}
 [data-testid="stCaptionContainer"] {color: #bfbfbf; line-height: 1.55;}
 [data-testid="stSidebar"] {background: #171717; border-right: 1px solid #383838;}
 [data-testid="stSidebar"] .block-container {padding-inline: 1.25rem;}
+[data-testid="stSidebarUserContent"] {padding-top: .75rem;}
+[data-testid="stSidebar"] h2 {
+  line-height: 1.4 !important;
+  letter-spacing: 0;
+  padding: .2rem 0 0;
+  margin-top: 0;
+  overflow: visible;
+}
 [data-testid="stMetric"] {
   background: #1b1b1b;
   border: 1px solid #414141;

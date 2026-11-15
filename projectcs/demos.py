@@ -644,6 +644,18 @@ def parse_raw_dem_with_demoparser2(dem_path, match_id, map_no, db_path=DB_PATH, 
 
     parse_errors = {}
     parser = DemoParser(str(dem_path))
+    match_start_tick = 0
+    try:
+        ev_list = parser.list_game_events() if hasattr(parser, "list_game_events") else None
+        if ev_list is None or "begin_new_match" in ev_list:
+            bnm_df = parser.parse_event("begin_new_match")
+            if bnm_df is not None and hasattr(bnm_df, "empty") and not bnm_df.empty and "tick" in bnm_df:
+                ticks = [int(t) for t in bnm_df["tick"].dropna().tolist()]
+                if ticks:
+                    match_start_tick = max(ticks)
+    except Exception:
+        match_start_tick = 0
+
     deaths_df = _parse_demo_event(
         parser,
         "player_death",
@@ -691,22 +703,71 @@ def parse_raw_dem_with_demoparser2(dem_path, match_id, map_no, db_path=DB_PATH, 
         other=["total_rounds_played"],
     )
 
+    def _clean_str(val):
+        if val is None:
+            return ""
+        s = str(val).strip()
+        return "" if s.lower() in ("none", "nan") else s
+
+    def _row_tick(row):
+        t = _finite_float(row.get("tick"))
+        return int(t) if t is not None else None
+
+    round_winners = {}
+    match_end_tick = 0
+    if "round_end" not in parse_errors and round_end_df is not None:
+        valid_re_rows = []
+        for _, row in round_end_df.iterrows():
+            r_tick = _row_tick(row)
+            if match_start_tick > 0 and r_tick is not None and r_tick < match_start_tick:
+                continue
+            w_raw = row.get("winner")
+            w_side = None
+            if w_raw in (2, "2", "T", "t", "TERRORIST"):
+                w_side = "T"
+            elif w_raw in (3, "3", "CT", "ct", "COUNTERTERRORIST"):
+                w_side = "CT"
+            if w_side is None:
+                continue
+            valid_re_rows.append((row, r_tick, w_side))
+
+        re_offset = 1
+        if valid_re_rows:
+            played_vals = [int(row.get("total_rounds_played", 0)) for row, _, _ in valid_re_rows]
+            if min(played_vals) >= 1:
+                re_offset = 0
+        for row, r_tick, w_side in valid_re_rows:
+            r_no = int(row.get("total_rounds_played", 0)) + re_offset
+            round_winners[r_no] = (w_side, row.get("reason"))
+            if r_tick is not None and r_tick > match_end_tick:
+                match_end_tick = r_tick
+
     events = []
     if deaths_df is not None:
         for _, row in deaths_df.iterrows():
+            tick = _row_tick(row)
+            if match_start_tick > 0 and tick is not None and tick < match_start_tick:
+                continue
+            if match_end_tick > 0 and tick is not None and tick > match_end_tick:
+                continue
             round_no = int(row.get("total_rounds_played", 0)) + 1
-            tick = int(row.get("tick", 0))
-            v_steam = str(row.get("user_steamid") or "")
-            a_steam = str(row.get("attacker_steamid") or "")
-            v_name = str(row.get("user_name") or "")
-            a_name = str(row.get("attacker_name") or "")
+            tick_val = tick if tick is not None else 0
+            v_steam = _clean_str(row.get("user_steamid"))
+            a_steam = _clean_str(row.get("attacker_steamid"))
+            v_name = _clean_str(row.get("user_name"))
+            a_name = _clean_str(row.get("attacker_name"))
 
             v_info = steam_to_player.get(v_steam) or name_to_player.get(v_name.casefold())
             a_info = steam_to_player.get(a_steam) or name_to_player.get(a_name.casefold())
             v_pid = v_info[0] if isinstance(v_info, tuple) else (v_info or v_steam or v_name)
             a_pid = a_info[0] if isinstance(a_info, tuple) else (a_info or a_steam or a_name)
-            v_team = v_info[1] if isinstance(v_info, tuple) and v_info[1] else str(row.get("user_team_num") or "")
-            a_team = a_info[1] if isinstance(a_info, tuple) and a_info[1] else str(row.get("attacker_team_num") or "")
+            v_team = v_info[1] if isinstance(v_info, tuple) and v_info[1] else _clean_str(row.get("user_team_num"))
+            a_team = a_info[1] if isinstance(a_info, tuple) and a_info[1] else _clean_str(row.get("attacker_team_num"))
+
+            if not a_pid:
+                a_pid = "world"
+            if not a_team:
+                a_team = "world"
 
             v_side_num = row.get("user_team_num")
             a_side_num = row.get("attacker_team_num")
@@ -715,8 +776,8 @@ def parse_raw_dem_with_demoparser2(dem_path, match_id, map_no, db_path=DB_PATH, 
 
             events.append({
                 "round_no": round_no,
-                "tick": tick,
-                "time_sec": round(tick / 64.0, 3),
+                "tick": tick_val,
+                "time_sec": round(tick_val / 64.0, 3),
                 "victim_id": v_pid,
                 "victim_name": v_name,
                 "victim_team": v_team,
@@ -727,12 +788,12 @@ def parse_raw_dem_with_demoparser2(dem_path, match_id, map_no, db_path=DB_PATH, 
                 "attacker_side": a_side,
                 "weapon": row.get("weapon"),
                 "headshot": bool(row.get("headshot")),
-                "victim_x": float(row["user_X"]) if row.get("user_X") is not None else None,
-                "victim_y": float(row["user_Y"]) if row.get("user_Y") is not None else None,
-                "victim_z": float(row["user_Z"]) if row.get("user_Z") is not None else None,
-                "attacker_x": float(row["attacker_X"]) if row.get("attacker_X") is not None else None,
-                "attacker_y": float(row["attacker_Y"]) if row.get("attacker_Y") is not None else None,
-                "attacker_z": float(row["attacker_Z"]) if row.get("attacker_Z") is not None else None,
+                "victim_x": _finite_float(row.get("user_X")),
+                "victim_y": _finite_float(row.get("user_Y")),
+                "victim_z": _finite_float(row.get("user_Z")),
+                "attacker_x": _finite_float(row.get("attacker_X")),
+                "attacker_y": _finite_float(row.get("attacker_Y")),
+                "attacker_z": _finite_float(row.get("attacker_Z")),
             })
 
     # Se l'estrazione obbligatoria di round_end è fallita con eccezione, non fabbricare mai round fittizi
@@ -743,22 +804,22 @@ def parse_raw_dem_with_demoparser2(dem_path, match_id, map_no, db_path=DB_PATH, 
     for ev in events:
         deaths_by_round.setdefault(int(ev["round_no"]), []).append(ev)
 
-    round_winners = {}
-    if round_end_df is not None:
-        for _, row in round_end_df.iterrows():
-            r_no = int(row.get("total_rounds_played", 0)) + 1
-            w_raw = row.get("winner")
-            w_side = None
-            if w_raw in (2, "2", "T", "t", "TERRORIST"):
-                w_side = "T"
-            elif w_raw in (3, "3", "CT", "ct", "COUNTERTERRORIST"):
-                w_side = "CT"
-            round_winners[r_no] = (w_side, row.get("reason"))
+    def _in_live_window(row):
+        t = _row_tick(row)
+        if t is None:
+            return True
+        if match_start_tick > 0 and t < match_start_tick:
+            return False
+        if match_end_tick > 0 and t > match_end_tick:
+            return False
+        return True
 
     bomb_events_ok = not any(k in parse_errors for k in ("bomb_planted", "bomb_defused", "bomb_exploded"))
     plants_by_round = {}
     if bomb_planted_df is not None:
         for _, row in bomb_planted_df.iterrows():
+            if not _in_live_window(row):
+                continue
             r_no = int(row.get("total_rounds_played", 0)) + 1
             if "site" in row or "user_X" in row or "X" in row:
                 plants_by_round[r_no] = (_infer_plant_site(row, map_name), int(row.get("tick") or 0))
@@ -766,6 +827,8 @@ def parse_raw_dem_with_demoparser2(dem_path, match_id, map_no, db_path=DB_PATH, 
     defused_rounds = set()
     if bomb_defused_df is not None:
         for _, row in bomb_defused_df.iterrows():
+            if not _in_live_window(row):
+                continue
             if "site" in row or "winner" in row or "tick" in row:
                 if "user_name" not in row or "site" in row:
                     defused_rounds.add(int(row.get("total_rounds_played", 0)) + 1)
@@ -773,6 +836,8 @@ def parse_raw_dem_with_demoparser2(dem_path, match_id, map_no, db_path=DB_PATH, 
     exploded_rounds = set()
     if bomb_exploded_df is not None:
         for _, row in bomb_exploded_df.iterrows():
+            if not _in_live_window(row):
+                continue
             if "site" in row or "winner" in row or "tick" in row:
                 if "user_name" not in row or "site" in row:
                     exploded_rounds.add(int(row.get("total_rounds_played", 0)) + 1)
@@ -784,6 +849,8 @@ def parse_raw_dem_with_demoparser2(dem_path, match_id, map_no, db_path=DB_PATH, 
         invalid_equip_keys = set()
         has_inline_equip = "current_equip_value" in getattr(freeze_end_df, "columns", [])
         for idx, (_, row) in enumerate(freeze_end_df.iterrows()):
+            if not _in_live_window(row):
+                continue
             r_no = int(row.get("total_rounds_played", idx)) + 1
             if row.get("tick") is not None:
                 tick_to_round[int(row["tick"])] = r_no

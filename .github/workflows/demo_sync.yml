@@ -42,7 +42,7 @@ jobs:
       - name: Install dependencies and CS2 demo parser
         run: |
           python -m pip install -r requirements.txt
-          python -m pip install demoparser2==0.38.0 zstandard==0.23.0
+          python -m pip install demoparser2==0.42.2 zstandard==0.23.0
       - name: Run incremental FACEIT sync and rate-limited demo pipeline
         id: pipeline
         env:
