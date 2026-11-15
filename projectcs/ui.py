@@ -205,7 +205,7 @@ def show_table(df):
                             else ("color: #f08080; font-weight: bold" if value == "Sconfitta" else ""),
                             subset=["Esito"])
     st.dataframe(styled, hide_index=True, width="stretch",
-                 height=min(600, 44 * (len(table) + 1) + 8), row_height=42,
+                 height="content" if len(table) <= 12 else 600, row_height=42,
                  column_config=config)
 
 def show_players(df, compact=False, view="Sintesi"):
