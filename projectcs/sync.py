@@ -49,6 +49,7 @@ def _write_and_validate_csv(tmp_path, rows):
 def export_snapshot(db_path=DB_PATH, published_dir=None, allow_shrink=False):
     published = Path(published_dir) if published_dir else (ROOT / "published")
     published.mkdir(parents=True, exist_ok=True)
+    restore_published_demo_state(db_path=db_path, published_dir=published)
 
     with connect(db_path, readonly=True) as conn:
         tables = {
