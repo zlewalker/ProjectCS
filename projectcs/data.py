@@ -2,7 +2,7 @@ from pathlib import Path
 import pandas as pd
 
 from projectcs.config import DB_PATH, NAMES, ROOT
-from projectcs.db import read_demo_events, read_demo_rounds, read_rows
+from projectcs.db import db_available, read_demo_events, read_demo_rounds, read_rows
 
 SNAPSHOT_PATH = ROOT / "published" / "player_maps.csv"
 DEMO_EVENTS_SNAPSHOT_PATH = ROOT / "published" / "demo_events.csv"
@@ -103,6 +103,7 @@ _SNAPSHOT_CACHE = {}
 def frame(rows):
     df = pd.DataFrame(rows, columns=COLUMNS)
     df["date"] = pd.to_datetime(df["date"], utc=True).dt.tz_localize(None)
+    df["source"] = df["source"].fillna("faceit").astype(str).str.lower()
     for column in NUMERIC_COLUMNS:
         df[column] = pd.to_numeric(df[column], errors="coerce")
     return df
@@ -122,7 +123,7 @@ def read_snapshot(path=None):
 def using_snapshot(db_path=None, snapshot_path=None):
     db_file = Path(db_path) if db_path is not None else Path(DB_PATH)
     snap_file = Path(snapshot_path) if snapshot_path is not None else Path(SNAPSHOT_PATH)
-    return not db_file.exists() and snap_file.exists()
+    return not db_available(db_file) and snap_file.exists()
 
 
 def load_data(row_loader=None, snapshot_check=None, db_path=None, snapshot_path=None):

@@ -46,17 +46,19 @@ jobs:
       - name: Run incremental FACEIT sync and rate-limited demo pipeline
         id: pipeline
         env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           FACEIT_API_KEY: ${{ secrets.FACEIT_API_KEY }}
           FACEIT_DOWNLOAD_API_KEY: ${{ secrets.FACEIT_DOWNLOAD_API_KEY }}
+          LEETIFY_API_KEY: ${{ secrets.LEETIFY_API_KEY }}
         run: |
           set +e
           sync_rc=0
           demo_rc=0
-          if [ -n "$FACEIT_API_KEY" ]; then
+          if [ -n "$FACEIT_API_KEY" ] || [ -n "$LEETIFY_API_KEY" ]; then
             python -m projectcs.sync --since 2026-08-20 --export-snapshot
             sync_rc=$?
           else
-            echo "FACEIT_API_KEY not configured; skipping incremental FACEIT sync."
+            echo "FACEIT_API_KEY and LEETIFY_API_KEY not configured; skipping incremental sync."
           fi
 
           has_local_demos=false
@@ -68,14 +70,14 @@ jobs:
           if [ "$has_local_demos" = "true" ]; then
             demo_args+=(--ingest-local)
           fi
-          if [ -n "$FACEIT_DOWNLOAD_API_KEY" ] && [ -f data/projectcs.sqlite ]; then
+          if [ -n "$FACEIT_DOWNLOAD_API_KEY" ] && { [ -n "$DATABASE_URL" ] || [ -f data/projectcs.sqlite ]; }; then
             demo_args+=(--download-missing --limit "${{ github.event.inputs.demo_limit || '5' }}" --min-interval "${{ github.event.inputs.min_interval || '12' }}")
           elif [ -z "$FACEIT_DOWNLOAD_API_KEY" ]; then
             echo "FACEIT_DOWNLOAD_API_KEY not configured; skipping automatic demo downloads."
           fi
 
           if [ ${#demo_args[@]} -gt 0 ]; then
-            if [ -f data/projectcs.sqlite ]; then
+            if [ -n "$DATABASE_URL" ] || [ -f data/projectcs.sqlite ]; then
               demo_args+=(--export-snapshot)
             fi
             python -m projectcs.demos "${demo_args[@]}"

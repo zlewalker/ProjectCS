@@ -1,11 +1,15 @@
 import csv
 import json
+import os
+import re
 import sqlite3
+import tomllib
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
-from projectcs.config import DB_PATH, NAMES
+from projectcs.config import DB_PATH, NAMES, ROOT
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (version INTEGER PRIMARY KEY);
@@ -103,6 +107,215 @@ MIGRATION_COLUMNS = {
 _INITIALIZED_DBS = set()
 _READ_ROWS_CACHE = {}
 
+_PG_TABLE_COLS = {
+    "schema_meta": ["version"],
+    "players": ["player_id", "nickname", "steam_id"],
+    "matches": ["match_id", "started_at", "source", "raw_json", "imported_at"],
+    "player_maps": [
+        "match_id", "map_no", "team_id", "player_id", "nickname", "date", "map",
+        "roster_count", "won", "rounds", "kills", "deaths", "assists", "adr",
+        "headshots", "damage", "first_kills", "entry_count", "entry_wins",
+        "sniper_kills", "flash_count", "flash_successes", "enemies_flashed",
+        "utility_count", "utility_damage", "utility_enemies", "clutch_kills",
+        "clutch_1v1_count", "clutch_1v1_wins", "clutch_1v2_count", "clutch_1v2_wins",
+        "pistol_kills", "mvps", "double_kills", "triple_kills", "quadro_kills",
+        "penta_kills", "traded_deaths", "untraded_deaths", "first_half_score",
+        "second_half_score", "overtime_score", "score_for", "score_against",
+        "source", "coverage",
+    ],
+    "rounds": ["match_id", "map_no", "team_id", "round_no", "payload_json"],
+    "events": ["match_id", "map_no", "round_no", "event_index", "tick", "event_type", "player_id", "payload_json"],
+    "demo_status": [
+        "match_id", "map_no", "status", "attempts", "resource_url",
+        "last_attempt_at", "next_retry_at", "error", "details_json",
+    ],
+}
+
+_PG_PK_COLS = {
+    "schema_meta": ["version"],
+    "players": ["player_id"],
+    "matches": ["match_id"],
+    "player_maps": ["match_id", "map_no", "team_id", "player_id"],
+    "rounds": ["match_id", "map_no", "team_id", "round_no"],
+    "events": ["match_id", "map_no", "event_index"],
+    "demo_status": ["match_id", "map_no"],
+}
+
+SCHEMA_PG = (
+    SCHEMA.replace("INTEGER PRIMARY KEY,", "SERIAL PRIMARY KEY,")
+    .replace("INSERT OR IGNORE INTO schema_meta VALUES (2);", "INSERT INTO schema_meta VALUES (2) ON CONFLICT DO NOTHING;")
+    .replace(" REAL,", " DOUBLE PRECISION,")
+    .replace(" REAL\n", " DOUBLE PRECISION\n")
+)
+
+
+def _normalize_pg_url(raw_url):
+    url = (raw_url or "").strip()
+    if not url:
+        return ""
+    if "://" in url and "@" in url:
+        scheme, rest = url.split("://", 1)
+        creds, host_part = rest.rsplit("@", 1)
+        if ":" in creds:
+            user, pwd = creds.split(":", 1)
+            if any(ch in pwd for ch in ("?", "#", " ")):
+                pwd = quote(pwd, safe="%")
+                url = f"{scheme}://{user}:{pwd}@{host_part}"
+    if "supabase." in url and "sslmode=" not in url:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}sslmode=require"
+    return url
+
+
+def get_database_url():
+    env_url = os.environ.get("DATABASE_URL")
+    if env_url and env_url.strip():
+        return _normalize_pg_url(env_url)
+    try:
+        import streamlit as st
+        sec_url = st.secrets.get("DATABASE_URL", "")
+        if sec_url and str(sec_url).strip():
+            return _normalize_pg_url(str(sec_url))
+    except Exception:
+        pass
+    secrets_path = ROOT / ".streamlit" / "secrets.toml"
+    if secrets_path.exists():
+        try:
+            data = tomllib.loads(secrets_path.read_text(encoding="utf-8"))
+            sec_url = data.get("DATABASE_URL", "")
+            if sec_url and str(sec_url).strip():
+                return _normalize_pg_url(str(sec_url))
+        except Exception:
+            pass
+    return ""
+
+
+def using_postgres(path=DB_PATH):
+    if not get_database_url():
+        return False
+    try:
+        return Path(path).resolve() == Path(DB_PATH).resolve()
+    except Exception:
+        return False
+
+
+def db_available(path=DB_PATH):
+    return using_postgres(path) or Path(path).exists()
+
+
+def _qmark_to_percent_s(sql):
+    out = []
+    in_single = False
+    i = 0
+    while i < len(sql):
+        ch = sql[i]
+        if ch == "'":
+            out.append(ch)
+            if in_single and i + 1 < len(sql) and sql[i + 1] == "'":
+                out.append("'")
+                i += 2
+                continue
+            in_single = not in_single
+        elif ch == "?" and not in_single:
+            out.append("%s")
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _translate_sql_for_pg(sql):
+    stripped = sql.strip().rstrip(";")
+    if stripped == "SELECT name FROM sqlite_master WHERE type='table'":
+        return "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = 'public'", None
+
+    m_pragma = re.match(r"^PRAGMA\s+table_info\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)$", stripped, re.IGNORECASE)
+    if m_pragma:
+        return (
+            "SELECT column_name AS name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = %s",
+            (m_pragma.group(1),),
+        )
+
+    m_ignore = re.match(r"^INSERT\s+OR\s+IGNORE\s+INTO\s+(.+)$", stripped, re.IGNORECASE | re.DOTALL)
+    if m_ignore:
+        body = _qmark_to_percent_s(m_ignore.group(1))
+        if "on conflict" not in body.lower():
+            body = f"{body} ON CONFLICT DO NOTHING"
+        return f"INSERT INTO {body}", None
+
+    m_replace = re.match(
+        r"^INSERT\s+OR\s+REPLACE\s+INTO\s+([A-Za-z_][A-Za-z0-9_]*)\s*(\([^)]+\))?\s*(VALUES\s*.+)$",
+        stripped,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if m_replace:
+        tbl = m_replace.group(1)
+        cols_raw = m_replace.group(2)
+        vals = _qmark_to_percent_s(m_replace.group(3))
+        if cols_raw:
+            cols = [c.strip() for c in cols_raw.strip()[1:-1].split(",")]
+        else:
+            cols = _PG_TABLE_COLS.get(tbl, [])
+        pk = _PG_PK_COLS.get(tbl, [])
+        non_pk = [c for c in cols if c not in pk]
+        cols_clause = f" {cols_raw}" if cols_raw else ""
+        if pk and non_pk:
+            updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in non_pk)
+            return f"INSERT INTO {tbl}{cols_clause} {vals} ON CONFLICT ({', '.join(pk)}) DO UPDATE SET {updates}", None
+        if pk:
+            return f"INSERT INTO {tbl}{cols_clause} {vals} ON CONFLICT ({', '.join(pk)}) DO NOTHING", None
+
+    return _qmark_to_percent_s(sql), None
+
+
+class _PgCursorProxy:
+    def __init__(self, rows):
+        self._rows = rows or []
+
+    def __iter__(self):
+        return iter(self._rows)
+
+    def fetchall(self):
+        return list(self._rows)
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+
+class _PgCompatConn:
+    def __init__(self, pg_conn):
+        self._conn = pg_conn
+
+    def execute(self, sql, params=None):
+        pg_sql, override_params = _translate_sql_for_pg(sql)
+        use_params = override_params if override_params is not None else params
+        with self._conn.cursor() as cur:
+            cur.execute(pg_sql, use_params)
+            rows = cur.fetchall() if cur.description is not None else []
+        return _PgCursorProxy(rows)
+
+    def executemany(self, sql, seq_of_params):
+        pg_sql, _ = _translate_sql_for_pg(sql)
+        with self._conn.cursor() as cur:
+            cur.executemany(pg_sql, list(seq_of_params))
+        return _PgCursorProxy([])
+
+    def executescript(self, sql):
+        for stmt in sql.split(";"):
+            stmt = stmt.strip()
+            if stmt:
+                self.execute(stmt)
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        self._conn.close()
+
 
 def _invalidate_cache(path):
     try:
@@ -115,16 +328,17 @@ def _invalidate_cache(path):
         _READ_ROWS_CACHE.pop(k, None)
 
 
-def _ensure_schema(conn, path_key):
+def _ensure_schema(conn, path_key, is_postgres=False):
     if path_key in _INITIALIZED_DBS:
         return
-    conn.executescript(SCHEMA)
+    conn.executescript(SCHEMA_PG if is_postgres else SCHEMA)
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(player_maps)")}
     for col_name, col_type in MIGRATION_COLUMNS.items():
         if col_name not in existing:
-            conn.execute(f"ALTER TABLE player_maps ADD COLUMN {col_name} {col_type}")
+            pg_type = "DOUBLE PRECISION" if is_postgres and col_type == "REAL" else col_type
+            conn.execute(f"ALTER TABLE player_maps ADD COLUMN {col_name} {pg_type}")
     rounds_cols = {row["name"] for row in conn.execute("PRAGMA table_info(rounds)")}
-    if "team_id" not in rounds_cols:
+    if "team_id" not in rounds_cols and not is_postgres:
         conn.execute("ALTER TABLE rounds RENAME TO _rounds_legacy")
         conn.execute(
             "CREATE TABLE rounds ("
@@ -150,6 +364,30 @@ def _ensure_schema(conn, path_key):
 
 @contextmanager
 def connect(path=DB_PATH, readonly=False):
+    if using_postgres(path):
+        import psycopg
+        from psycopg.rows import dict_row
+
+        url = get_database_url()
+        pg_conn = psycopg.connect(url, row_factory=dict_row, connect_timeout=15)
+        compat = _PgCompatConn(pg_conn)
+        pg_key = f"pg:{url.rsplit('@', 1)[-1]}"
+        try:
+            if not readonly:
+                _ensure_schema(compat, pg_key, is_postgres=True)
+            yield compat
+            if not readonly:
+                compat.commit()
+        except Exception:
+            try:
+                compat.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            compat.close()
+        return
+
     path = Path(path)
     path_key = str(path.resolve())
     if readonly:
@@ -169,7 +407,7 @@ def connect(path=DB_PATH, readonly=False):
     conn = sqlite3.connect(path, timeout=30)
     conn.row_factory = sqlite3.Row
     try:
-        _ensure_schema(conn, path_key)
+        _ensure_schema(conn, path_key, is_postgres=False)
         yield conn
         conn.commit()
     except Exception:
@@ -183,13 +421,16 @@ def connect(path=DB_PATH, readonly=False):
 
 
 def read_rows(path=DB_PATH):
-    path = Path(path)
-    if not path.exists():
+    if not db_available(path):
         return []
-    stat = path.stat()
-    cache_key = (str(path.resolve()), stat.st_mtime_ns, stat.st_size)
-    if cache_key in _READ_ROWS_CACHE:
-        return [dict(r) for r in _READ_ROWS_CACHE[cache_key]]
+    is_pg = using_postgres(path)
+    cache_key = None
+    if not is_pg:
+        path = Path(path)
+        stat = path.stat()
+        cache_key = (str(path.resolve()), stat.st_mtime_ns, stat.st_size)
+        if cache_key in _READ_ROWS_CACHE:
+            return [dict(r) for r in _READ_ROWS_CACHE[cache_key]]
     with connect(path, readonly=True) as conn:
         tables = {
             r["name"]
@@ -305,8 +546,7 @@ def complete_match_ids_conn(conn):
 
 
 def existing_match_ids(path=DB_PATH):
-    path = Path(path)
-    if not path.exists():
+    if not db_available(path):
         return set()
     with connect(path, readonly=True) as conn:
         return complete_match_ids_conn(conn)
@@ -327,9 +567,10 @@ def _save_match_conn(conn, match, rows, now=None):
                 prev["untraded_deaths"],
                 prev["coverage"],
             )
+    match_source = (rows[0].get("source") if rows else None) or match.get("source") or "faceit"
     conn.execute(
         "INSERT OR REPLACE INTO matches VALUES (?,?,?,?,?)",
-        (match_id, rows[0]["date"] if rows else None, "faceit", json.dumps(match), now),
+        (match_id, rows[0]["date"] if rows else None, match_source, json.dumps(match), now),
     )
     conn.execute("DELETE FROM player_maps WHERE match_id=?", (match_id,))
     for row in rows:
@@ -358,8 +599,7 @@ def reprocess_stored_matches(path=DB_PATH):
     """Ricalcola player_maps dai payload raw_json già salvati in matches senza chiamate di rete."""
     from projectcs.faceit import FaceitError, normalize_match
 
-    path = Path(path)
-    if not path.exists():
+    if not db_available(path):
         return {"matches": 0, "player_maps": 0, "failed": []}
 
     total_rows = 0
@@ -964,8 +1204,7 @@ def record_demo_status(
 
 
 def read_demo_events(path=DB_PATH):
-    path = Path(path)
-    if not path.exists():
+    if not db_available(path):
         return []
     with connect(path, readonly=True) as conn:
         tables = {
@@ -1022,8 +1261,7 @@ def read_demo_events(path=DB_PATH):
 
 
 def read_demo_rounds(path=DB_PATH):
-    path = Path(path)
-    if not path.exists():
+    if not db_available(path):
         return []
     with connect(path, readonly=True) as conn:
         tables = {
@@ -1093,8 +1331,7 @@ def read_demo_rounds(path=DB_PATH):
 
 
 def read_demo_status(path=DB_PATH):
-    path = Path(path)
-    if not path.exists():
+    if not db_available(path):
         return []
     with connect(path, readonly=True) as conn:
         tables = {
@@ -1146,6 +1383,8 @@ def restore_published_demo_state(db_path=DB_PATH, published_dir=None):
     e gli stati coda già pubblicati in `published/` per le partite presenti in `player_maps`
     ma prive di copertura demo completa nel DB corrente.
     """
+    if using_postgres(db_path):
+        return {"restored_maps": 0, "restored_status": 0}
     db_file = Path(db_path)
     if not db_file.exists():
         return {"restored_maps": 0, "restored_status": 0}
@@ -1358,8 +1597,7 @@ def restore_published_demo_state(db_path=DB_PATH, published_dir=None):
 def read_records(table, path=DB_PATH):
     if table not in {"reviews", "objectives"}:
         raise ValueError("Tabella non consentita")
-    path = Path(path)
-    if not path.exists():
+    if not db_available(path):
         return []
     with connect(path, readonly=True) as conn:
         tables = {
@@ -1395,6 +1633,8 @@ def set_objective_status(objective_id, status, path=DB_PATH):
 
 
 def backup(path=DB_PATH):
+    if using_postgres(path):
+        return None
     path = Path(path)
     if not path.exists():
         return None
@@ -1404,3 +1644,57 @@ def backup(path=DB_PATH):
         result = target.serialize()
         target.close()
         return result
+
+
+def migrate_sqlite_to_postgres(sqlite_path=DB_PATH, pg_url=None):
+    """Migra tutte le tabelle dallo SQLite locale a Supabase PostgreSQL in modo idempotente."""
+    import psycopg
+    from psycopg.rows import dict_row
+
+    src_path = Path(sqlite_path)
+    if not src_path.exists():
+        raise FileNotFoundError(f"SQLite non trovato: {src_path}")
+    url = _normalize_pg_url(pg_url) if pg_url else get_database_url()
+    if not url:
+        raise RuntimeError("DATABASE_URL non configurata.")
+
+    src = sqlite3.connect(f"file:{src_path.resolve().as_posix()}?mode=ro", uri=True, timeout=30)
+    src.row_factory = sqlite3.Row
+    pg_raw = psycopg.connect(url, row_factory=dict_row, connect_timeout=30)
+    pg = _PgCompatConn(pg_raw)
+    try:
+        _ensure_schema(pg, f"pg_migrate:{url.rsplit('@', 1)[-1]}", is_postgres=True)
+        counts = {}
+        for tbl in ("players", "matches", "player_maps", "rounds", "events", "demo_status"):
+            rows = [dict(r) for r in src.execute(f"SELECT * FROM {tbl}")]
+            if not rows:
+                counts[tbl] = 0
+                continue
+            cols = list(rows[0].keys())
+            placeholders = ",".join("?" for _ in cols)
+            sql = f"INSERT OR REPLACE INTO {tbl}({','.join(cols)}) VALUES ({placeholders})"
+            pg.executemany(sql, [tuple(r[c] for c in cols) for r in rows])
+            counts[tbl] = len(rows)
+
+        for tbl, cols in (
+            ("reviews", ["id", "created_at", "match_id", "round_no", "kind", "category", "observation", "status", "action"]),
+            ("objectives", ["id", "created_at", "title", "action", "metric", "status"]),
+        ):
+            rows = [dict(r) for r in src.execute(f"SELECT * FROM {tbl}")]
+            if rows:
+                placeholders = ",".join("?" for _ in cols)
+                pg.executemany(
+                    f"INSERT INTO {tbl}({','.join(cols)}) VALUES ({placeholders}) ON CONFLICT (id) DO NOTHING",
+                    [tuple(r[c] for c in cols) for r in rows],
+                )
+                pg.execute(f"SELECT setval(pg_get_serial_sequence('{tbl}', 'id'), COALESCE((SELECT MAX(id) FROM {tbl}), 1))")
+            counts[tbl] = len(rows)
+
+        pg.commit()
+        return counts
+    except Exception:
+        pg.rollback()
+        raise
+    finally:
+        src.close()
+        pg.close()

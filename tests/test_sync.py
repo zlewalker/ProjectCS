@@ -190,6 +190,56 @@ class SyncTests(unittest.TestCase):
             self.assertEqual(json.loads(snap_meta.read_text(encoding="utf-8"))["player_maps"], 1)
             self.assertEqual(list(snap_dir.glob("*.tmp")), [])
 
+    def test_leetify_premier_sync_and_postgres_helpers(self):
+        from projectcs.db import _normalize_pg_url, _translate_sql_for_pg, read_rows
+        from projectcs.leetify import is_premier_match, sync_leetify_premier
+
+        self.assertTrue(is_premier_match({"dataSource": "matchmaking_premier"}))
+        self.assertTrue(is_premier_match({"dataSource": "matchmaking"}))
+        self.assertFalse(is_premier_match({"dataSource": "faceit"}))
+
+        encoded = _normalize_pg_url("postgresql://user:p?w#d@aws-1-eu-west-1.pooler.supabase.com:5432/postgres")
+        self.assertIn("p%3Fw%23d@", encoded)
+        self.assertIn("sslmode=require", encoded)
+
+        pg_sql, _ = _translate_sql_for_pg("INSERT OR REPLACE INTO players VALUES (?,?,?)")
+        self.assertIn("ON CONFLICT (player_id) DO UPDATE SET", pg_sql)
+
+        class FakeLeetifyClient:
+            def profile_matches(self, steam64_id):
+                return [
+                    {"id": "prem-1", "dataSource": "matchmaking_premier", "finished_at": "2026-11-20T20:00:00Z"},
+                    {"id": "fac-1", "dataSource": "faceit", "finished_at": "2026-11-20T18:00:00Z"},
+                ]
+
+            def match_details(self, game_id):
+                return {
+                    "id": game_id,
+                    "dataSource": "matchmaking_premier",
+                    "map_name": "de_dust2",
+                    "finished_at": "2026-11-20T20:00:00Z",
+                    "team_scores": [{"team_number": 2, "score": 13}, {"team_number": 3, "score": 9}],
+                    "stats": [
+                        {"steam64_id": "76561198013393532", "initial_team_number": 2, "total_kills": 24, "total_deaths": 14, "total_assists": 4, "dpr": 92.5, "total_hs_kills": 11},
+                        {"steam64_id": "76561198808871912", "initial_team_number": 2, "total_kills": 19, "total_deaths": 15, "total_assists": 6, "dpr": 78.0, "total_hs_kills": 9},
+                    ],
+                }
+
+        with tempfile.TemporaryDirectory() as folder:
+            db = Path(folder) / "premier.sqlite"
+            with connect(db) as conn:
+                conn.execute("INSERT OR REPLACE INTO players VALUES (?,?,?)", ("p-lew", "LEWALKER", "76561198013393532"))
+                conn.execute("INSERT OR REPLACE INTO players VALUES (?,?,?)", ("p-grv", "Grvpe", "76561198808871912"))
+
+            res = sync_leetify_premier("dummy-key", path=db, client=FakeLeetifyClient())
+            self.assertEqual(res["found"], 1)
+            self.assertEqual(res["imported"], 1)
+            rows = read_rows(db)
+            self.assertEqual(len(rows), 2)
+            self.assertEqual({r["source"] for r in rows}, {"premier"})
+            self.assertEqual({r["roster_count"] for r in rows}, {2})
+            self.assertEqual({r["won"] for r in rows}, {1})
+
 
 if __name__ == "__main__":
     unittest.main()

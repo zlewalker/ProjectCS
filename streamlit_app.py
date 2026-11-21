@@ -113,8 +113,34 @@ if data.empty and page not in {"Revisione", "Allenamento"}:
     st.info("L'archivio è vuoto. Le partite appariranno dopo il prossimo aggiornamento.")
     st.stop()
 
+if not data.empty:
+    if "source" not in data.columns:
+        data["source"] = "faceit"
+    data["source"] = data["source"].fillna("faceit").astype(str).str.lower()
+    src_maps = team_maps(data)
+    faceit_n = int((src_maps["source"] == "faceit").sum())
+    premier_n = int((src_maps["source"] == "premier").sum())
+    total_n = int(len(src_maps))
+    src_options = [f"FACEIT ({faceit_n})", f"Premier ({premier_n})", f"Tutte ({total_n})"]
+    default_src = src_options[0] if faceit_n > 0 or premier_n == 0 else src_options[1]
+    chosen_src = st.segmented_control(
+        "Circuito di gioco",
+        src_options,
+        default=default_src,
+        key="primary_source_filter",
+    )
+    if not chosen_src:
+        chosen_src = default_src
+    if chosen_src.startswith("FACEIT"):
+        data = data[data["source"] == "faceit"].copy()
+    elif chosen_src.startswith("Premier"):
+        data = data[data["source"] == "premier"].copy()
+
 base = data.copy()
 filtered = data.copy()
+if data.empty and page not in {"Revisione", "Allenamento"}:
+    st.info("Nessuna partita disponibile per il circuito selezionato.")
+    st.stop()
 if not data.empty:
     with st.expander("Filtri del campione", expanded=True):
         c1, c2, c3 = st.columns([1.2, 1.5, 1.5])
@@ -241,6 +267,7 @@ elif page == "Partite":
         st.stop()
     display = pd.DataFrame({
         "Data": games["date"].dt.strftime("%d/%m/%Y"),
+        "Circuito": games["source"].astype(str).str.upper().replace({"PREMIER": "Premier", "FACEIT": "FACEIT"}),
         "Mappa": games["map"].str.title(),
         "Membri": games["roster_count"],
         "Esito": games["won"].map({1: "Vittoria", 0: "Sconfitta"}).fillna("Non disponibile"),
@@ -249,7 +276,14 @@ elif page == "Partite":
             for a, b in zip(games["score_for"], games["score_against"])],
         "Round 1° half": games["first_half_score"],
         "Round 2° half": games["second_half_score"],
-        "Matchroom": ["https://www.faceit.com/en/cs2/room/" + value for value in games["match_id"]],
+        "Matchroom": [
+            (
+                "https://leetify.com/app/match-details/" + value.removeprefix("leetify:")
+                if str(value).startswith("leetify:")
+                else "https://www.faceit.com/en/cs2/room/" + value
+            )
+            for value in games["match_id"]
+        ],
     })
     show_table(display)
     st.caption("I due tempi riportano i round vinti; non distinguono il lato T/CT. Gli ID completi restano nell'esportazione CSV.")

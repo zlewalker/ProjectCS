@@ -189,7 +189,7 @@ def show_table(df):
         key: st.column_config.NumberColumn(label, format=fmt, width=width, help=help_text)
         for key, (label, fmt, width, help_text) in definitions.items() if key in table
     }
-    for key in ["Giocatore", "Mappa", "Data", "Esito", "Punteggio", "Situazione"]:
+    for key in ["Giocatore", "Mappa", "Data", "Esito", "Punteggio", "Situazione", "Circuito"]:
         if key in table:
             config[key] = st.column_config.TextColumn(key, width=155 if key == "Giocatore" else 110)
     if "Formazione" in table:

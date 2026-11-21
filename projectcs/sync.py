@@ -141,10 +141,23 @@ def export_snapshot(db_path=DB_PATH, published_dir=None):
         meta_tmp.unlink(missing_ok=True)
 
 
+def _load_secret(name):
+    val = os.environ.get(name)
+    if val:
+        return val
+    try:
+        import tomllib
+        with (ROOT / ".streamlit" / "secrets.toml").open("rb") as file:
+            return tomllib.load(file).get(name)
+    except FileNotFoundError:
+        return None
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Importa lo storico dei cinque membri, incluse solo/duo.")
+    parser = argparse.ArgumentParser(description="Importa lo storico FACEIT e Premier (Leetify) dei cinque membri.")
     parser.add_argument("--since", help="Data iniziale UTC inclusa: YYYY-MM-DD")
     parser.add_argument("--until", help="Data finale UTC esclusa; default adesso")
+    parser.add_argument("--source", choices=["all", "faceit", "premier"], default="all", help="Sorgente partite da sincronizzare")
     parser.add_argument("--force", action="store_true", help="Riscarica anche le partite già presenti nel database")
     parser.add_argument("--reprocess-local", action="store_true", help="Ricalcola player_maps dai raw_json locali senza rete")
     parser.add_argument("--export-snapshot", action="store_true", help="Aggiorna published/player_maps.csv e metadata.json")
@@ -180,65 +193,77 @@ def main():
     until = timestamp(args.until) if args.until else int(datetime.now(timezone.utc).timestamp())
     if since >= until:
         parser.error("--since deve precedere --until")
-    key = os.environ.get("FACEIT_API_KEY")
-    if not key:
-        try:
-            import tomllib
-            with (ROOT / ".streamlit" / "secrets.toml").open("rb") as file:
-                key = tomllib.load(file).get("FACEIT_API_KEY")
-        except FileNotFoundError:
-            pass
+    key = _load_secret("FACEIT_API_KEY")
+    leetify_key = _load_secret("LEETIFY_API_KEY")
+    exit_rc = 0
     try:
-        client = FaceitClient(key)
-        tracked = {}
-        for nickname in NAMES:
-            player = client.player(nickname)
-            tracked[player["player_id"]] = nickname
+        if args.source in {"all", "faceit"} and key:
+            client = FaceitClient(key)
+            tracked = {}
+            for nickname in NAMES:
+                player = client.player(nickname)
+                tracked[player["player_id"]] = nickname
+                with connect() as conn:
+                    conn.execute("INSERT OR REPLACE INTO players VALUES (?,?,?)",
+                                 (player["player_id"], nickname, player.get("steam_id_64")))
+            matches = {}
+            for pid in tracked:
+                for item in client.history(pid, since, until - 1):
+                    if str(item.get("status", "")).casefold() == "finished":
+                        matches[item["match_id"]] = item
+
             with connect() as conn:
-                conn.execute("INSERT OR REPLACE INTO players VALUES (?,?,?)",
-                             (player["player_id"], nickname, player.get("steam_id_64")))
-        matches = {}
-        for pid in tracked:
-            for item in client.history(pid, since, until - 1):
-                if str(item.get("status", "")).casefold() == "finished":
-                    matches[item["match_id"]] = item
+                already_stored = complete_match_ids_conn(conn)
 
-        with connect() as conn:
-            already_stored = complete_match_ids_conn(conn)
+            pending = sorted(matches) if args.force else [m for m in sorted(matches) if m not in already_stored]
+            skipped = len(matches) - len(pending)
+            print(f"FACEIT: trovate {len(matches)} partite uniche ({skipped} già in archivio, {len(pending)} da scaricare).")
+            failed = []
+            for index, match_id in enumerate(pending, 1):
+                try:
+                    match = client.get(f"/matches/{match_id}")
+                    stats = client.get(f"/matches/{match_id}/stats")
+                    rows = normalize_match(match, stats, tracked)
+                    if not rows:
+                        raise FaceitError("Statistiche non ancora disponibili")
+                    match["_projectcs_stats"] = stats
+                    save_match(match, rows)
+                    print(f"[{index}/{len(pending)}] {match_id}: {len(rows)} righe")
+                except (FaceitError, requests.RequestException) as error:
+                    failed.append({"match_id": match_id, "error": type(error).__name__})
+                    print(f"[{index}/{len(pending)}] {match_id}: non importata, riprovare.")
+            with connect() as conn:
+                conn.execute("INSERT INTO analysis_runs(match_id,module,version,status,created_at,details_json) VALUES (?,?,?,?,?,?)",
+                             (None, "faceit_sync", "2", "partial" if failed else "complete",
+                              datetime.now(timezone.utc).isoformat(),
+                              json.dumps({"matches": len(matches), "downloaded": len(pending), "skipped": skipped, "failed": failed})))
+            if failed:
+                print(f"{len(failed)} partite FACEIT da riprovare. I dati preesistenti sono conservati in caso di errore.")
+                exit_rc = 1
 
-        pending = sorted(matches) if args.force else [m for m in sorted(matches) if m not in already_stored]
-        skipped = len(matches) - len(pending)
-        print(f"Trovate {len(matches)} partite uniche ({skipped} già in archivio, {len(pending)} da scaricare). Importazione idempotente.")
-        failed = []
-        for index, match_id in enumerate(pending, 1):
+        if args.source in {"all", "premier"} and leetify_key:
+            from projectcs.leetify import LeetifyError, sync_leetify_premier
+
             try:
-                match = client.get(f"/matches/{match_id}")
-                stats = client.get(f"/matches/{match_id}/stats")
-                rows = normalize_match(match, stats, tracked)
-                if not rows:
-                    raise FaceitError("Statistiche non ancora disponibili")
-                match["_projectcs_stats"] = stats
-                save_match(match, rows)
-                print(f"[{index}/{len(pending)}] {match_id}: {len(rows)} righe")
-            except (FaceitError, requests.RequestException) as error:
-                failed.append({"match_id": match_id, "error": type(error).__name__})
-                print(f"[{index}/{len(pending)}] {match_id}: non importata, riprovare.")
-        with connect() as conn:
-            conn.execute("INSERT INTO analysis_runs(match_id,module,version,status,created_at,details_json) VALUES (?,?,?,?,?,?)",
-                         (None, "faceit_sync", "2", "partial" if failed else "complete",
-                          datetime.now(timezone.utc).isoformat(),
-                          json.dumps({"matches": len(matches), "downloaded": len(pending), "skipped": skipped, "failed": failed})))
-        if failed:
-            print(f"{len(failed)} partite da riprovare. I dati preesistenti sono conservati in caso di errore.")
-            return 1
-        if args.export_snapshot:
+                l_res = sync_leetify_premier(leetify_key, since=since, until=until, force=args.force)
+                print(
+                    f"Premier (Leetify): trovate {l_res['found']} partite "
+                    f"({l_res['skipped']} già in archivio, {l_res['imported']} importate, {len(l_res['failed'])} errori)."
+                )
+                if l_res["failed"]:
+                    exit_rc = 1
+            except (LeetifyError, requests.RequestException) as error:
+                print(f"Sync Premier (Leetify) interrotto: {error}")
+                exit_rc = 1
+
+        if args.export_snapshot and exit_rc == 0:
             try:
                 meta = export_snapshot()
                 print(f"Snapshot esportato: {meta['matches']} partite, {meta['player_maps']} righe.")
             except Exception as error:
                 print(f"Esportazione snapshot fallita: {error}")
                 return 1
-        return 0
+        return exit_rc
     except (FaceitError, requests.RequestException) as error:
         print("Importazione interrotta: controlla chiave API, connessione e intervallo date.")
         print(str(error) if isinstance(error, FaceitError) else type(error).__name__)

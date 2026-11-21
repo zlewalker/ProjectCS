@@ -22,6 +22,7 @@ import requests
 from projectcs.config import DB_PATH, NAMES, ROOT
 from projectcs.db import (
     connect,
+    db_available,
     read_demo_status,
     record_demo_status,
     restore_published_demo_state,
@@ -374,7 +375,7 @@ def pending_demo_queue(path=DB_PATH, max_age_days=30, now_ts=None, force=False, 
     - ordina per roster_count DESC (prima i 5-stack e il core 3+), poi per data più recente.
     """
     path = Path(path)
-    if not path.exists():
+    if not db_available(path):
         return []
 
     if published_dir is not None or path.resolve() == Path(DB_PATH).resolve():
