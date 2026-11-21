@@ -1,4 +1,4 @@
-﻿"""Uso:
+"""Uso:
   python -m projectcs.sync --since 2026-08-20 --until 2026-11-13
   python -m projectcs.sync --reprocess-local --export-snapshot
 """
