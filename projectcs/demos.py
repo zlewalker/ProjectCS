@@ -437,14 +437,14 @@ def pending_demo_queue(path=DB_PATH, max_age_days=30, now_ts=None, force=False, 
 
         map_rows = conn.execute(
             """
-            SELECT pm.match_id, pm.map_no, pm.map, pm.date,
+            SELECT pm.match_id, pm.map_no, MAX(pm.map) AS map, MAX(pm.date) AS date,
                    MAX(pm.roster_count) AS roster_count,
                    MAX(pm.rounds) AS max_rounds,
                    MIN(CASE WHEN pm.coverage = 'Statistiche match + trade demo'
                              AND pm.untraded_deaths IS NOT NULL
                              AND pm.traded_deaths IS NOT NULL
                        THEN 1 ELSE 0 END) AS all_covered,
-                   m.raw_json
+                   MAX(m.raw_json) AS raw_json
             FROM player_maps pm
             INNER JOIN matches m ON m.match_id = pm.match_id
             GROUP BY pm.match_id, pm.map_no
