@@ -310,6 +310,7 @@ def main():
                     f"({l_res['skipped']} già in archivio, {l_res['imported']} importate, {len(l_res['failed'])} errori)."
                 )
                 if l_res["failed"]:
+                    print("Dettagli errori Premier:", l_res["failed"][:5])
                     exit_rc = 1
             except (LeetifyError, requests.RequestException) as error:
                 print(f"Sync Premier (Leetify) interrotto: {error}")

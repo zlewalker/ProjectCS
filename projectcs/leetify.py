@@ -327,7 +327,7 @@ def sync_leetify_premier(api_key, path=DB_PATH, since=None, until=None, force=Fa
         try:
             detail = cli.match_details(gid)
             if not detail:
-                failed.append({"match_id": f"leetify:{gid}", "error": "detail_unavailable"})
+                skipped += 1
                 continue
             d_ts = _parse_iso_ts(detail.get("finished_at") or detail.get("finishedAt") or detail.get("created_at"))
             if d_ts is not None:
@@ -336,7 +336,7 @@ def sync_leetify_premier(api_key, path=DB_PATH, since=None, until=None, force=Fa
                     continue
             rows = normalize_leetify_match(detail, tracked_by_steam)
             if not rows:
-                failed.append({"match_id": f"leetify:{gid}", "error": "no_tracked_players_or_invalid"})
+                skipped += 1
                 continue
             payload = dict(detail)
             payload["match_id"] = f"leetify:{gid}"

@@ -655,6 +655,10 @@ def reprocess_stored_matches(path=DB_PATH):
                     raise ValueError("Payload JSON non valido")
                 is_premier = item["source"] == "premier" or payload.get("source") == "premier" or str(match_id).startswith("leetify:")
                 if is_premier:
+                    from projectcs.leetify import is_premier_match
+                    if not is_premier_match(payload):
+                        conn.execute("RELEASE SAVEPOINT sp_reprocess")
+                        continue
                     rows = normalize_leetify_match(payload, tracked_by_steam)
                 else:
                     stats = payload.get("_projectcs_stats")
