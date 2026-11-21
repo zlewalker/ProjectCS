@@ -196,7 +196,8 @@ class SyncTests(unittest.TestCase):
 
         self.assertTrue(is_premier_match({"dataSource": "matchmaking_premier"}))
         self.assertTrue(is_premier_match({"dataSource": "premier"}))
-        self.assertFalse(is_premier_match({"dataSource": "matchmaking"}))
+        self.assertTrue(is_premier_match({"dataSource": "matchmaking"}))
+        self.assertFalse(is_premier_match({"dataSource": "matchmaking_competitive"}))
         self.assertFalse(is_premier_match({"dataSource": "faceit"}))
 
         encoded = _normalize_pg_url("postgresql://user:p?w#d@aws-1-eu-west-1.pooler.supabase.com:5432/postgres")

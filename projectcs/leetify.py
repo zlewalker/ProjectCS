@@ -11,10 +11,11 @@ from projectcs.db import connect, save_match
 
 BASE_URL = "https://api-public.cs-prod.leetify.com"
 PREMIER_SOURCES = {
+    "matchmaking",
     "matchmaking_premier",
     "premier",
 }
-EXCLUDED_SOURCES = {"faceit", "renown", "esportal", "esea", "challengeme", "popflash", "matchmaking", "matchmaking_competitive", "wingman"}
+EXCLUDED_SOURCES = {"faceit", "renown", "esportal", "esea", "challengeme", "popflash", "matchmaking_competitive", "wingman"}
 
 
 class LeetifyError(RuntimeError):
