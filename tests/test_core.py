@@ -427,6 +427,36 @@ class AnalyticsTests(unittest.TestCase):
             self.assertEqual(read_records("reviews", path)[0]["observation"], "Test")
             self.assertTrue(backup(path).startswith(b"SQLite format 3"))
 
+    def test_demo_man_advantage_summary(self):
+        import pandas as pd
+        from projectcs.data import demo_man_advantage_summary
+
+        rounds_df = pd.DataFrame([
+            {"match_id": "m1", "map_no": 0, "round_no": 1, "team_id": "A", "side": "T", "won": 1, "map": "dust2"},
+            {"match_id": "m1", "map_no": 0, "round_no": 2, "team_id": "A", "side": "T", "won": 0, "map": "dust2"},
+        ])
+        events_df = pd.DataFrame([
+            # Round 1 (won): 5v5 -> 5v4 -> 5v3 -> 5v2 -> 5v1 -> 5v0
+            {"match_id": "m1", "map_no": 0, "round_no": 1, "tick": 100, "event_index": 0, "victim_id": "e1", "victim_team": "B", "victim_side": "CT"},
+            {"match_id": "m1", "map_no": 0, "round_no": 1, "tick": 200, "event_index": 1, "victim_id": "e2", "victim_team": "B", "victim_side": "CT"},
+            {"match_id": "m1", "map_no": 0, "round_no": 1, "tick": 300, "event_index": 2, "victim_id": "e3", "victim_team": "B", "victim_side": "CT"},
+            {"match_id": "m1", "map_no": 0, "round_no": 1, "tick": 400, "event_index": 3, "victim_id": "e4", "victim_team": "B", "victim_side": "CT"},
+            {"match_id": "m1", "map_no": 0, "round_no": 1, "tick": 500, "event_index": 4, "victim_id": "e5", "victim_team": "B", "victim_side": "CT"},
+            # Round 2 (lost): 5v5 -> 4v5 -> 3v5 -> 2v5 -> 1v5 -> 0v5
+            {"match_id": "m1", "map_no": 0, "round_no": 2, "tick": 100, "event_index": 0, "victim_id": "p1", "victim_team": "A", "victim_side": "T"},
+            {"match_id": "m1", "map_no": 0, "round_no": 2, "tick": 200, "event_index": 1, "victim_id": "p2", "victim_team": "A", "victim_side": "T"},
+            {"match_id": "m1", "map_no": 0, "round_no": 2, "tick": 300, "event_index": 2, "victim_id": "p3", "victim_team": "A", "victim_side": "T"},
+            {"match_id": "m1", "map_no": 0, "round_no": 2, "tick": 400, "event_index": 3, "victim_id": "p4", "victim_team": "A", "victim_side": "T"},
+            {"match_id": "m1", "map_no": 0, "round_no": 2, "tick": 500, "event_index": 4, "victim_id": "p5", "victim_team": "A", "victim_side": "T"},
+        ])
+        res = demo_man_advantage_summary(events_df, rounds_df).set_index("Situazione")
+        self.assertEqual(res.loc["5v3", "Round"], 1)
+        self.assertEqual(res.loc["5v3", "Vittorie %"], 100.0)
+        self.assertEqual(res.loc["5v1", "Vinti"], 1)
+        self.assertEqual(res.loc["3v5", "Round"], 1)
+        self.assertEqual(res.loc["3v5", "Vittorie %"], 0.0)
+        self.assertEqual(res.loc["1v5", "Persi"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -566,6 +566,130 @@ def demo_tactical_summary(rounds_df, maps_df=None):
     return pd.DataFrame(rows, columns=cols)
 
 
+ALL_MAN_SITUATIONS = [
+    "5v3", "5v2", "5v1",
+    "4v3", "4v2", "4v1",
+    "3v2", "3v1", "2v1",
+    "4v4", "3v3", "2v2", "1v1",
+    "3v5", "2v5", "1v5",
+    "3v4", "2v4", "1v4",
+    "2v3", "1v3", "1v2",
+]
+DEFAULT_MAN_SITUATIONS = ["5v3", "5v2", "5v1", "3v5", "2v5", "1v5"]
+
+
+def demo_man_advantage_summary(events_df, rounds_df, maps_df=None, situations=None):
+    """
+    Ricostruisce dai round ed eventi demo tutte le situazioni numeriche XvY toccate
+    (es. 5v3, 5v2, 5v1, 3v5, 2v5, 1v5, ecc., lasciando 5v4/4v5 alla tabella principale)
+    e calcola Round, Vinti, Persi e Vittorie %.
+    """
+    cols = ["Situazione", "Round", "Vinti", "Persi", "Vittorie %"]
+    target = list(DEFAULT_MAN_SITUATIONS if situations is None else situations)
+    if not target or events_df is None or events_df.empty or rounds_df is None or rounds_df.empty:
+        return pd.DataFrame(columns=cols)
+
+    ev_sub = _filter_by_maps_df(events_df, maps_df) if maps_df is not None else events_df
+    rd_sub = _filter_by_maps_df(rounds_df, maps_df) if maps_df is not None else rounds_df
+    if ev_sub.empty or rd_sub.empty:
+        return pd.DataFrame(columns=cols)
+
+    rd_valid = rd_sub.dropna(subset=["match_id", "map_no", "round_no", "side", "won"]).copy()
+    rd_valid["side"] = rd_valid["side"].astype(str).str.upper()
+    rd_valid = rd_valid[rd_valid["side"].isin(["T", "CT"])]
+    if rd_valid.empty:
+        return pd.DataFrame(columns=cols)
+
+    if "event_type" in ev_sub.columns:
+        ev_sub = ev_sub[ev_sub["event_type"].fillna("player_death") == "player_death"]
+    ev_sorted = ev_sub.sort_values(
+        [c for c in ("match_id", "map_no", "round_no", "tick", "event_index") if c in ev_sub.columns],
+        kind="stable",
+    )
+
+    events_by_round = {}
+    for row in ev_sorted.to_dict("records"):
+        m_id = row.get("match_id")
+        m_no = row.get("map_no")
+        r_no = row.get("round_no")
+        if m_id is None or pd.isna(m_no) or pd.isna(r_no):
+            continue
+        events_by_round.setdefault((str(m_id), int(m_no), int(r_no)), []).append(row)
+
+    stats = {label: {"rounds": 0, "wins": 0} for label in ALL_MAN_SITUATIONS}
+    excluded = {(5, 5), (5, 4), (4, 5)}
+
+    for r_row in rd_valid.to_dict("records"):
+        key = (str(r_row["match_id"]), int(r_row["map_no"]), int(r_row["round_no"]))
+        r_events = events_by_round.get(key)
+        if not r_events:
+            continue
+
+        our_team = str(r_row.get("team_id") or "").strip()
+        our_side = str(r_row["side"]).upper()
+        won = 1 if int(r_row["won"]) == 1 else 0
+
+        our_alive = 5
+        opp_alive = 5
+        our_dead = set()
+        opp_dead = set()
+        seen = set()
+
+        idx = 0
+        n_ev = len(r_events)
+        while idx < n_ev and our_alive > 0 and opp_alive > 0:
+            cur_tick = r_events[idx].get("tick")
+            while idx < n_ev and r_events[idx].get("tick") == cur_tick:
+                ev = r_events[idx]
+                idx += 1
+                v_id = str(ev.get("victim_id") or "").strip()
+                v_team = str(ev.get("victim_team") or "").strip()
+                v_side = str(ev.get("victim_side") or "").strip().upper()
+
+                if our_team and v_team and v_team.lower() not in {"world", "nan", "none"}:
+                    is_ours = v_team == our_team
+                elif v_side in {"T", "CT"}:
+                    is_ours = v_side == our_side
+                else:
+                    continue
+
+                if is_ours:
+                    if v_id and v_id in our_dead:
+                        continue
+                    if v_id:
+                        our_dead.add(v_id)
+                    our_alive = max(0, our_alive - 1)
+                else:
+                    if v_id and v_id in opp_dead:
+                        continue
+                    if v_id:
+                        opp_dead.add(v_id)
+                    opp_alive = max(0, opp_alive - 1)
+
+            if our_alive >= 1 and opp_alive >= 1 and (our_alive, opp_alive) not in excluded:
+                seen.add(f"{our_alive}v{opp_alive}")
+
+        for label in seen:
+            if label in stats:
+                stats[label]["rounds"] += 1
+                stats[label]["wins"] += won
+
+    rows = []
+    for label in target:
+        if label not in stats:
+            continue
+        rnds = stats[label]["rounds"]
+        wins = stats[label]["wins"]
+        rows.append({
+            "Situazione": label,
+            "Round": rnds,
+            "Vinti": wins,
+            "Persi": rnds - wins,
+            "Vittorie %": (wins / rnds * 100.0) if rnds else None,
+        })
+    return pd.DataFrame(rows, columns=cols)
+
+
 def demo_economy_summary(rounds_df, maps_df=None):
     """Riepiloga i round e la percentuale di vittoria per fascia economica (Pistol, Eco, Force, Full Buy)."""
     sub = _filter_by_maps_df(rounds_df, maps_df) if maps_df is not None else rounds_df

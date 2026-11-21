@@ -14,7 +14,10 @@ import streamlit as st
 
 from projectcs.config import NAMES, PRIORITY_MAPS, ROSTER
 from projectcs.data import (
+    ALL_MAN_SITUATIONS,
+    DEFAULT_MAN_SITUATIONS,
     demo_economy_summary,
+    demo_man_advantage_summary,
     demo_side_summary,
     demo_tactical_summary,
     lineup_summary,
@@ -404,6 +407,25 @@ elif page == "Demo & Heatmap":
         st.info("Statistiche 5v4, post-plant A/B e retake disponibili dopo l'elaborazione dei round demo.")
     else:
         show_table(tactical_table)
+
+    with st.expander("Altre situazioni numeriche (5v3, 5v2, 5v1, 3v5, 2v5, 1v5 e tutte le XvY)", expanded=False):
+        st.caption(
+            "Calcolate dalla sequenza delle morti nei round demo validati. "
+            "Le situazioni principali 5v4 e 4v5 restano nella tabella sopra."
+        )
+        selected_situations = st.multiselect(
+            "Situazioni da visualizzare",
+            ALL_MAN_SITUATIONS,
+            default=DEFAULT_MAN_SITUATIONS,
+            key="demo_man_situations",
+        )
+        man_table = demo_man_advantage_summary(
+            demo_events_df, demo_rounds_df, filtered, situations=selected_situations
+        )
+        if man_table.empty:
+            st.info("Nessun round demo disponibile per le situazioni selezionate.")
+        else:
+            show_table(man_table)
 
     st.subheader("Rendimento per Economia (Pistol, Eco, Force, Full Buy)")
     if econ_table.empty:

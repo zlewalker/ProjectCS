@@ -181,13 +181,15 @@ def show_table(df):
         "Post-plant B %": ("Post-plant B %", "%.1f%%", 125, "Round vinti da T dopo plant sul sito B."),
         "Retake tentati": ("Retake", "%d", 90, "Retake tentati dal lato CT."),
         "Retake %": ("Retake %", "%.1f%%", 105, "Retake vinti dal lato CT / tentati."),
+        "Vinti": ("Vinti", "%d", 85, "Round vinti nella situazione selezionata."),
+        "Persi": ("Persi", "%d", 85, "Round persi nella situazione selezionata."),
         "Valore medio equip.": ("Equip. medio $", "$%.0f", 125, "Valore medio equipaggiamento di squadra a inizio round."),
     }
     config = {
         key: st.column_config.NumberColumn(label, format=fmt, width=width, help=help_text)
         for key, (label, fmt, width, help_text) in definitions.items() if key in table
     }
-    for key in ["Giocatore", "Mappa", "Data", "Esito", "Punteggio"]:
+    for key in ["Giocatore", "Mappa", "Data", "Esito", "Punteggio", "Situazione"]:
         if key in table:
             config[key] = st.column_config.TextColumn(key, width=155 if key == "Giocatore" else 110)
     if "Formazione" in table:
