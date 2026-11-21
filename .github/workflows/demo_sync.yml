@@ -1,4 +1,4 @@
-name: Sync & Demo Pipeline (Parse & Auto-Delete)
+﻿name: Sync & Demo Pipeline (Parse & Auto-Delete)
 on:
   workflow_dispatch:
     inputs:
@@ -10,6 +10,10 @@ on:
         description: "Secondi minimi di attesa tra due download demo"
         required: false
         default: "12"
+      reprocess_local:
+        description: "Ricalcola tutte le partite salvate dai raw_json (true/false)"
+        required: false
+        default: "false"
   schedule:
     - cron: "0 */6 * * *"
   push:
@@ -54,7 +58,10 @@ jobs:
           set +e
           sync_rc=0
           demo_rc=0
-          if [ -n "$FACEIT_API_KEY" ] || [ -n "$LEETIFY_API_KEY" ]; then
+          if [ "${{ github.event.inputs.reprocess_local || 'false' }}" = "true" ]; then
+            python -m projectcs.sync --reprocess-local --export-snapshot
+            sync_rc=$?
+          elif [ -n "$FACEIT_API_KEY" ] || [ -n "$LEETIFY_API_KEY" ]; then
             python -m projectcs.sync --since 2026-08-20 --export-snapshot
             sync_rc=$?
           else
@@ -118,3 +125,4 @@ jobs:
             echo "Pipeline completed with partial errors (sync_rc=${{ steps.pipeline.outputs.sync_rc }}, demo_rc=${{ steps.pipeline.outputs.demo_rc }}). Validated snapshots were preserved and committed."
             exit 1
           fi
+

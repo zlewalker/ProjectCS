@@ -1,4 +1,4 @@
-"""Client e normalizzazione per partite CS2 Premier tramite Leetify Public API."""
+﻿"""Client e normalizzazione per partite CS2 Premier tramite Leetify Public API."""
 from datetime import datetime, timezone
 import os
 from pathlib import Path
@@ -184,6 +184,25 @@ def normalize_leetify_match(detail, tracked_by_steam):
             if adr is None and dmg is not None and total_rounds and total_rounds > 0:
                 adr = dmg / total_rounds
 
+            traded_deaths = _num(ps.get("traded_deaths_succeed"))
+            untraded_deaths = (
+                max(0.0, deaths - traded_deaths)
+                if deaths is not None and traded_deaths is not None
+                else None
+            )
+            he_thrown = _num(ps.get("he_thrown"))
+            molotov_thrown = _num(ps.get("molotov_thrown"))
+            smoke_thrown = _num(ps.get("smoke_thrown"))
+            flash_thrown = _num(ps.get("flashbang_thrown"))
+            util_parts = [v for v in (he_thrown, molotov_thrown, smoke_thrown, flash_thrown) if v is not None]
+            utility_count = sum(util_parts) if util_parts else None
+            he_avg = _num(ps.get("he_foes_damage_avg"))
+            utility_damage = (
+                he_avg * he_thrown
+                if he_avg is not None and he_thrown is not None
+                else he_avg
+            )
+
             rows.append({
                 "match_id": match_id,
                 "map_no": 0,
@@ -205,11 +224,11 @@ def normalize_leetify_match(detail, tracked_by_steam):
                 "entry_count": None,
                 "entry_wins": None,
                 "sniper_kills": None,
-                "flash_count": _num(ps.get("flashbang_thrown")),
-                "flash_successes": None,
+                "flash_count": flash_thrown,
+                "flash_successes": _num(ps.get("flashbang_leading_to_kill")),
                 "enemies_flashed": _num(ps.get("flashbang_hit_foe")),
-                "utility_count": _num(ps.get("he_thrown")),
-                "utility_damage": _num(ps.get("he_foes_damage_avg")),
+                "utility_count": utility_count,
+                "utility_damage": utility_damage,
                 "utility_enemies": None,
                 "clutch_kills": None,
                 "clutch_1v1_count": None,
@@ -222,8 +241,8 @@ def normalize_leetify_match(detail, tracked_by_steam):
                 "triple_kills": _num(ps.get("multi3k")),
                 "quadro_kills": _num(ps.get("multi4k")),
                 "penta_kills": _num(ps.get("multi5k")),
-                "traded_deaths": None,
-                "untraded_deaths": None,
+                "traded_deaths": traded_deaths,
+                "untraded_deaths": untraded_deaths,
                 "first_half_score": None,
                 "second_half_score": None,
                 "overtime_score": None,
@@ -231,6 +250,18 @@ def normalize_leetify_match(detail, tracked_by_steam):
                 "score_against": score_against,
                 "source": "premier",
                 "coverage": "leetify_api",
+                "leetify_rating": _num(ps.get("leetify_rating")),
+                "ct_leetify_rating": _num(ps.get("ct_leetify_rating")),
+                "t_leetify_rating": _num(ps.get("t_leetify_rating")),
+                "preaim": _num(ps.get("preaim")),
+                "reaction_time_ms": _num(ps.get("reaction_time_ms")),
+                "counter_strafe_good": _num(ps.get("counter_strafing_shots_good")),
+                "counter_strafe_all": _num(ps.get("counter_strafing_shots_all")),
+                "spray_accuracy": _num(ps.get("spray_accuracy")),
+                "trade_kill_opp": _num(ps.get("trade_kill_opportunities")),
+                "trade_kills_succeed": _num(ps.get("trade_kills_succeed")),
+                "rounds_survived": _num(ps.get("rounds_survived")),
+                "utility_on_death_avg": _num(ps.get("utility_on_death_avg")),
             })
     return rows
 
@@ -295,3 +326,4 @@ def sync_leetify_premier(api_key, path=DB_PATH, since=None, until=None, force=Fa
         "skipped": skipped,
         "failed": failed,
     }
+

@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 import pandas as pd
 
 from projectcs.config import DB_PATH, NAMES, ROOT
@@ -55,6 +55,18 @@ COLUMNS = [
     "score_against",
     "source",
     "coverage",
+    "leetify_rating",
+    "ct_leetify_rating",
+    "t_leetify_rating",
+    "preaim",
+    "reaction_time_ms",
+    "counter_strafe_good",
+    "counter_strafe_all",
+    "spray_accuracy",
+    "trade_kill_opp",
+    "trade_kills_succeed",
+    "rounds_survived",
+    "utility_on_death_avg",
 ]
 
 NUMERIC_COLUMNS = [
@@ -95,6 +107,18 @@ NUMERIC_COLUMNS = [
     "score_for",
     "score_against",
     "roster_count",
+    "leetify_rating",
+    "ct_leetify_rating",
+    "t_leetify_rating",
+    "preaim",
+    "reaction_time_ms",
+    "counter_strafe_good",
+    "counter_strafe_all",
+    "spray_accuracy",
+    "trade_kill_opp",
+    "trade_kills_succeed",
+    "rounds_survived",
+    "utility_on_death_avg",
 ]
 
 _SNAPSHOT_CACHE = {}
@@ -199,6 +223,16 @@ def _opening_deaths_pct(rows):
     return float(opening_deaths / deaths * 100.0)
 
 
+def _weighted_avg(rows, val_col, weight_col, scale=1.0):
+    valid = rows.dropna(subset=[val_col, weight_col])
+    if valid.empty:
+        return None
+    w = valid[weight_col].sum()
+    if not w or w <= 0:
+        return None
+    return float((valid[val_col] * valid[weight_col]).sum() / w * scale)
+
+
 def player_summary(df):
     if df.empty:
         return pd.DataFrame()
@@ -265,6 +299,32 @@ def player_summary(df):
                 "Vittorie %": (
                     float(known_won["won"].mean() * 100) if len(known_won) else None
                 ),
+                "Leetify Rating": _weighted_avg(rows, "leetify_rating", "rounds", scale=100.0),
+                "Rating T": _weighted_avg(rows, "t_leetify_rating", "rounds", scale=100.0),
+                "Rating CT": _weighted_avg(rows, "ct_leetify_rating", "rounds", scale=100.0),
+                "Preaim (°)": _weighted_avg(rows, "preaim", "rounds"),
+                "TTD (ms)": _weighted_avg(rows, "reaction_time_ms", "rounds"),
+                "Counter-strafe %": _paired_ratio(
+                    rows, "counter_strafe_good", "counter_strafe_all", scale=100.0
+                ),
+                "Spray %": (
+                    _weighted_avg(
+                        rows.assign(
+                            _spray=rows["spray_accuracy"].apply(
+                                lambda v: v * 100.0 if pd.notna(v) and v <= 1.0 else v
+                            )
+                        ),
+                        "_spray",
+                        "rounds",
+                    )
+                ),
+                "Trade kill %": _paired_ratio(
+                    rows, "trade_kills_succeed", "trade_kill_opp", scale=100.0
+                ),
+                "Sopravvivenza %": _paired_ratio(
+                    rows, "rounds_survived", "rounds", scale=100.0
+                ),
+                "Util. persa / morte": _weighted_avg(rows, "utility_on_death_avg", "deaths"),
             }
         )
     return pd.DataFrame(result)
@@ -786,3 +846,4 @@ def prepare_heatmap_events(events_df, maps_df=None, mode="victim", include_oppon
     sub["attacker_rx"] = [c[0] for c in a_coords]
     sub["attacker_ry"] = [c[1] for c in a_coords]
     return sub
+

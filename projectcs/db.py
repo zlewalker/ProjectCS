@@ -1,4 +1,4 @@
-import csv
+﻿import csv
 import json
 import os
 import re
@@ -102,6 +102,18 @@ MIGRATION_COLUMNS = {
     "first_half_score": "INTEGER",
     "second_half_score": "INTEGER",
     "overtime_score": "INTEGER",
+    "leetify_rating": "REAL",
+    "ct_leetify_rating": "REAL",
+    "t_leetify_rating": "REAL",
+    "preaim": "REAL",
+    "reaction_time_ms": "REAL",
+    "counter_strafe_good": "REAL",
+    "counter_strafe_all": "REAL",
+    "spray_accuracy": "REAL",
+    "trade_kill_opp": "REAL",
+    "trade_kills_succeed": "REAL",
+    "rounds_survived": "REAL",
+    "utility_on_death_avg": "REAL",
 }
 
 _INITIALIZED_DBS = set()
@@ -122,6 +134,10 @@ _PG_TABLE_COLS = {
         "penta_kills", "traded_deaths", "untraded_deaths", "first_half_score",
         "second_half_score", "overtime_score", "score_for", "score_against",
         "source", "coverage",
+        "leetify_rating", "ct_leetify_rating", "t_leetify_rating", "preaim",
+        "reaction_time_ms", "counter_strafe_good", "counter_strafe_all",
+        "spray_accuracy", "trade_kill_opp", "trade_kills_succeed",
+        "rounds_survived", "utility_on_death_avg",
     ],
     "rounds": ["match_id", "map_no", "team_id", "round_no", "payload_json"],
     "events": ["match_id", "map_no", "round_no", "event_index", "tick", "event_type", "player_id", "payload_json"],
@@ -598,6 +614,7 @@ def save_match(match, rows, path=DB_PATH):
 def reprocess_stored_matches(path=DB_PATH):
     """Ricalcola player_maps dai payload raw_json già salvati in matches senza chiamate di rete."""
     from projectcs.faceit import FaceitError, normalize_match
+    from projectcs.leetify import LeetifyError, normalize_leetify_match
 
     if not db_available(path):
         return {"matches": 0, "player_maps": 0, "failed": []}
@@ -608,11 +625,16 @@ def reprocess_stored_matches(path=DB_PATH):
     now = datetime.now(timezone.utc).isoformat()
 
     with connect(path) as conn:
-        tracked = {
-            r["player_id"]: r["nickname"]
-            for r in conn.execute("SELECT player_id, nickname FROM players")
-        }
-        stored = conn.execute("SELECT match_id, raw_json FROM matches ORDER BY started_at").fetchall()
+        tracked = {}
+        tracked_by_steam = {}
+        for r in conn.execute("SELECT player_id, nickname, steam_id FROM players"):
+            tracked[r["player_id"]] = r["nickname"]
+            if r["steam_id"]:
+                tracked_by_steam[str(r["steam_id"]).strip()] = {
+                    "player_id": r["player_id"],
+                    "nickname": r["nickname"],
+                }
+        stored = conn.execute("SELECT match_id, source, raw_json FROM matches ORDER BY started_at").fetchall()
 
         for item in stored:
             match_id = item["match_id"]
@@ -621,24 +643,28 @@ def reprocess_stored_matches(path=DB_PATH):
                 payload = json.loads(item["raw_json"])
                 if not isinstance(payload, dict):
                     raise ValueError("Payload JSON non valido")
-                stats = payload.get("_projectcs_stats")
-                if not isinstance(stats, dict) or not stats.get("rounds"):
-                    raise ValueError("Statistiche _projectcs_stats assenti o vuote")
-                local_tracked = dict(tracked)
-                if not local_tracked:
-                    for game in stats.get("rounds", []):
-                        for team in game.get("teams", []):
-                            for player in team.get("players", []):
-                                if player.get("nickname") in NAMES and player.get("player_id"):
-                                    local_tracked[player["player_id"]] = player["nickname"]
-                rows = normalize_match(payload, stats, local_tracked)
+                is_premier = item["source"] == "premier" or payload.get("source") == "premier" or str(match_id).startswith("leetify:")
+                if is_premier:
+                    rows = normalize_leetify_match(payload, tracked_by_steam)
+                else:
+                    stats = payload.get("_projectcs_stats")
+                    if not isinstance(stats, dict) or not stats.get("rounds"):
+                        raise ValueError("Statistiche _projectcs_stats assenti o vuote")
+                    local_tracked = dict(tracked)
+                    if not local_tracked:
+                        for game in stats.get("rounds", []):
+                            for team in game.get("teams", []):
+                                for player in team.get("players", []):
+                                    if player.get("nickname") in NAMES and player.get("player_id"):
+                                        local_tracked[player["player_id"]] = player["nickname"]
+                    rows = normalize_match(payload, stats, local_tracked)
                 if not rows:
                     raise ValueError("Nessuna riga giocatore generata")
                 _save_match_conn(conn, payload, rows, now=now)
                 conn.execute("RELEASE SAVEPOINT sp_reprocess")
                 processed += 1
                 total_rows += len(rows)
-            except (ValueError, KeyError, TypeError, FaceitError) as exc:
+            except (ValueError, KeyError, TypeError, FaceitError, LeetifyError) as exc:
                 conn.execute("ROLLBACK TO SAVEPOINT sp_reprocess")
                 conn.execute("RELEASE SAVEPOINT sp_reprocess")
                 failed.append({"match_id": match_id, "error": str(exc)})
@@ -1698,3 +1724,4 @@ def migrate_sqlite_to_postgres(sqlite_path=DB_PATH, pg_url=None):
     finally:
         src.close()
         pg.close()
+

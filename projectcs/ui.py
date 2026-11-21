@@ -1,4 +1,4 @@
-"""Presentazione e grafici. Nessuna modifica alle metriche o ai dati salvati."""
+﻿"""Presentazione e grafici. Nessuna modifica alle metriche o ai dati salvati."""
 from html import escape
 
 import pandas as pd
@@ -25,6 +25,11 @@ VIEWS = {
     "Utility": ["Giocatore", "Mappe", "UDR", "Flash lanciate", "Flash %", "Nemici flash/r"],
     "Clutch": ["Giocatore", "Mappe", "Tentativi 1v1", "1v1 %",
                "Tentativi 1v2", "1v2 %", "Multikill"],
+    "Meccanica (Leetify)": [
+        "Giocatore", "Mappe", "Leetify Rating", "Rating T", "Rating CT",
+        "Preaim (°)", "TTD (ms)", "Counter-strafe %", "Spray %",
+        "Trade kill %", "Sopravvivenza %", "Util. persa / morte",
+    ],
 }
 OLD_VIEWS = {"base": "Sintesi", "entry_awp": "AWP e trade", "support_clutch": "Utility"}
 
@@ -183,6 +188,16 @@ def show_table(df):
         "Retake %": ("Retake %", "%.1f%%", 105, "Retake vinti dal lato CT / tentati."),
         "Vinti": ("Vinti", "%d", 85, "Round vinti nella situazione selezionata."),
         "Persi": ("Persi", "%d", 85, "Round persi nella situazione selezionata."),
+        "Leetify Rating": ("Leetify", "%+.2f", 95, "Leetify Rating medio pesato sui round (scala ×100)."),
+        "Rating T": ("Rating T", "%+.2f", 95, "Leetify Rating lato T (scala ×100)."),
+        "Rating CT": ("Rating CT", "%+.2f", 95, "Leetify Rating lato CT (scala ×100)."),
+        "Preaim (°)": ("Preaim", "%.1f°", 90, "Angolo medio di pre-mira (gradi) prima dello scontro."),
+        "TTD (ms)": ("TTD (ms)", "%.0f", 95, "Tempo medio di reazione / Time-to-Damage (millisecondi)."),
+        "Counter-strafe %": ("Counter-strafe %", "%.1f%%", 130, "Percentuale di colpi sparati con counter-strafe pulito."),
+        "Spray %": ("Spray %", "%.1f%%", 95, "Precisione spray media."),
+        "Trade kill %": ("Trade kill %", "%.1f%%", 115, "Trade kill riuscite / opportunità di trade."),
+        "Sopravvivenza %": ("Sopravv. %", "%.1f%%", 105, "Percentuale di round sopravvissuti."),
+        "Util. persa / morte": ("Util. persa $", "$%.0f", 115, "Valore medio di utility persa alla morte."),
         "Valore medio equip.": ("Equip. medio $", "$%.0f", 125, "Valore medio equipaggiamento di squadra a inizio round."),
     }
     config = {
@@ -435,3 +450,4 @@ def build_radar_heatmap_chart(events_df, map_name, mode="victim", show_vectors=F
         plot_bgcolor="#121417",
     )
     return fig
+

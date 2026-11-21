@@ -1,4 +1,4 @@
-import json
+﻿import json
 import sys
 import tempfile
 import unittest
@@ -220,7 +220,29 @@ class SyncTests(unittest.TestCase):
                     "finished_at": "2026-11-20T20:00:00Z",
                     "team_scores": [{"team_number": 2, "score": 13}, {"team_number": 3, "score": 9}],
                     "stats": [
-                        {"steam64_id": "76561198013393532", "initial_team_number": 2, "total_kills": 24, "total_deaths": 14, "total_assists": 4, "dpr": 92.5, "total_hs_kills": 11},
+                        {
+                            "steam64_id": "76561198013393532",
+                            "initial_team_number": 2,
+                            "total_kills": 24,
+                            "total_deaths": 14,
+                            "total_assists": 4,
+                            "dpr": 92.5,
+                            "total_hs_kills": 11,
+                            "traded_deaths_succeed": 5,
+                            "flashbang_thrown": 8,
+                            "flashbang_leading_to_kill": 2,
+                            "he_thrown": 4,
+                            "he_foes_damage_avg": 11.5,
+                            "leetify_rating": 0.045,
+                            "preaim": 9.4,
+                            "reaction_time_ms": 540.0,
+                            "counter_strafing_shots_good": 80,
+                            "counter_strafing_shots_all": 100,
+                            "trade_kills_succeed": 4,
+                            "trade_kill_opportunities": 8,
+                            "rounds_survived": 10,
+                            "utility_on_death_avg": 140.0,
+                        },
                         {"steam64_id": "76561198808871912", "initial_team_number": 2, "total_kills": 19, "total_deaths": 15, "total_assists": 6, "dpr": 78.0, "total_hs_kills": 9},
                     ],
                 }
@@ -239,7 +261,18 @@ class SyncTests(unittest.TestCase):
             self.assertEqual({r["source"] for r in rows}, {"premier"})
             self.assertEqual({r["roster_count"] for r in rows}, {2})
             self.assertEqual({r["won"] for r in rows}, {1})
+            lew = next(r for r in rows if r["nickname"] == "LEWALKER")
+            self.assertEqual(lew["traded_deaths"], 5.0)
+            self.assertEqual(lew["untraded_deaths"], 9.0)
+            self.assertEqual(lew["flash_successes"], 2.0)
+            self.assertAlmostEqual(lew["utility_damage"], 46.0)
+            self.assertAlmostEqual(lew["leetify_rating"], 0.045)
+            self.assertAlmostEqual(lew["preaim"], 9.4)
+            reproc = reprocess_stored_matches(db)
+            self.assertEqual(reproc["matches"], 1)
+            self.assertEqual(reproc["failed"], [])
 
 
 if __name__ == "__main__":
     unittest.main()
+
