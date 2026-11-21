@@ -51,22 +51,47 @@ jobs:
         run: |
           set +e
           sync_rc=0
+          demo_rc=0
           if [ -n "$FACEIT_API_KEY" ]; then
             python -m projectcs.sync --since 2026-08-20 --export-snapshot
             sync_rc=$?
+          else
+            echo "FACEIT_API_KEY not configured; skipping incremental FACEIT sync."
           fi
-          python -m projectcs.demos \
-            --ingest-local \
-            --download-missing \
-            --limit "${{ github.event.inputs.demo_limit || '5' }}" \
-            --min-interval "${{ github.event.inputs.min_interval || '12' }}" \
-            --export-snapshot
-          demo_rc=$?
+
+          has_local_demos=false
+          if [ -d demos ] && find demos -maxdepth 1 -type f \( -name "*.dem" -o -name "*.dem.gz" -o -name "*.dem.zst" -o -name "*.json" \) | grep -q .; then
+            has_local_demos=true
+          fi
+
+          demo_args=()
+          if [ "$has_local_demos" = "true" ]; then
+            demo_args+=(--ingest-local)
+          fi
+          if [ -n "$FACEIT_DOWNLOAD_API_KEY" ] && [ -f data/projectcs.sqlite ]; then
+            demo_args+=(--download-missing --limit "${{ github.event.inputs.demo_limit || '5' }}" --min-interval "${{ github.event.inputs.min_interval || '12' }}")
+          elif [ -z "$FACEIT_DOWNLOAD_API_KEY" ]; then
+            echo "FACEIT_DOWNLOAD_API_KEY not configured; skipping automatic demo downloads."
+          fi
+
+          if [ ${#demo_args[@]} -gt 0 ]; then
+            if [ -f data/projectcs.sqlite ]; then
+              demo_args+=(--export-snapshot)
+            fi
+            python -m projectcs.demos "${demo_args[@]}"
+            demo_rc=$?
+          fi
+
+          has_db=false
+          if [ -f data/projectcs.sqlite ]; then
+            has_db=true
+          fi
           echo "sync_rc=$sync_rc" >> "$GITHUB_OUTPUT"
           echo "demo_rc=$demo_rc" >> "$GITHUB_OUTPUT"
+          echo "has_db=$has_db" >> "$GITHUB_OUTPUT"
           exit 0
       - name: Save cached SQLite state
-        if: always()
+        if: always() && steps.pipeline.outputs.has_db == 'true'
         uses: actions/cache/save@v4
         with:
           path: data/projectcs.sqlite
