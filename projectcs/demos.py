@@ -366,7 +366,14 @@ class FaceitDemoDownloader:
         raise DemoError("Tentativi esauriti durante il download del file demo.")
 
 
-def pending_demo_queue(path=DB_PATH, max_age_days=30, now_ts=None, force=False, published_dir=None):
+def pending_demo_queue(
+    path=DB_PATH,
+    max_age_days=30,
+    now_ts=None,
+    force=False,
+    published_dir=None,
+    restore_if_missing=False,
+):
     """
     Costruisce la coda ordinata delle mappe che necessitano di analisi demo:
     - esclude mappe già con coverage completa (trade + round tattici) o demo_status 'complete'/'expired' (salvo force=True)
@@ -378,7 +385,7 @@ def pending_demo_queue(path=DB_PATH, max_age_days=30, now_ts=None, force=False, 
     if not db_available(path):
         return []
 
-    if published_dir is not None or path.resolve() == Path(DB_PATH).resolve():
+    if restore_if_missing and (published_dir is not None or path.resolve() == Path(DB_PATH).resolve()):
         restore_published_demo_state(db_path=path, published_dir=published_dir)
 
     now_dt = (
@@ -929,8 +936,6 @@ def parse_raw_dem_with_demoparser2(dem_path, match_id, map_no, db_path=DB_PATH, 
                     break
             if r1_side:
                 break
-        if not r1_side:
-            r1_side = "T"
 
         for r_no in all_round_nos:
             r_evs = sorted(deaths_by_round.get(r_no, []), key=lambda e: (e.get("tick", 0), e.get("time_sec", 0.0)))
@@ -948,7 +953,7 @@ def parse_raw_dem_with_demoparser2(dem_path, match_id, map_no, db_path=DB_PATH, 
                 if not team_id and ev.get("victim_side") in {"T", "CT"}:
                     side = ev["victim_side"]
                     break
-            if not side:
+            if not side and r1_side in {"T", "CT"}:
                 if r_no <= 12:
                     side = r1_side
                 elif r_no <= 24:
@@ -959,8 +964,15 @@ def parse_raw_dem_with_demoparser2(dem_path, match_id, map_no, db_path=DB_PATH, 
 
             first_kill = 0
             first_death = 0
-            if r_evs:
-                first_ev = r_evs[0]
+            duel_evs = [
+                ev for ev in r_evs
+                if ev.get("attacker_id")
+                and ev.get("attacker_id") != "world"
+                and ev.get("attacker_id") != ev.get("victim_id")
+                and ev.get("attacker_team") != ev.get("victim_team")
+            ]
+            first_ev = duel_evs[0] if duel_evs else (r_evs[0] if r_evs else None)
+            if first_ev is not None:
                 if team_id:
                     if first_ev.get("attacker_team") == team_id and first_ev.get("victim_team") != team_id:
                         first_kill = 1

@@ -1,4 +1,4 @@
-﻿"""Client e normalizzazione per partite CS2 Premier tramite Leetify Public API."""
+"""Client e normalizzazione per partite CS2 Premier tramite Leetify Public API."""
 from datetime import datetime, timezone
 import os
 from pathlib import Path
@@ -11,12 +11,10 @@ from projectcs.db import connect, save_match
 
 BASE_URL = "https://api-public.cs-prod.leetify.com"
 PREMIER_SOURCES = {
-    "matchmaking",
     "matchmaking_premier",
     "premier",
-    "valve",
 }
-EXCLUDED_SOURCES = {"faceit", "renown", "esportal", "esea", "challengeme", "popflash"}
+EXCLUDED_SOURCES = {"faceit", "renown", "esportal", "esea", "challengeme", "popflash", "matchmaking", "matchmaking_competitive", "wingman"}
 
 
 class LeetifyError(RuntimeError):
@@ -28,9 +26,15 @@ def _num(value, integer=False):
         return None
     try:
         num = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not (num == num) or num in (float("inf"), float("-inf")):
         return None
     return int(round(num)) if integer else num
+
+
+def _safe_int(value):
+    return _num(value, integer=True)
 
 
 def _parse_iso_ts(value):
@@ -53,7 +57,7 @@ def _parse_iso_ts(value):
 def _iso_utc(value):
     ts = _parse_iso_ts(value)
     if ts is None:
-        return datetime.now(timezone.utc).isoformat()
+        return None
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
@@ -67,7 +71,7 @@ def is_premier_match(item):
     ).strip().lower()
     if not ds or ds in EXCLUDED_SOURCES:
         return False
-    return ds in PREMIER_SOURCES or "premier" in ds or "matchmaking" in ds
+    return ds in PREMIER_SOURCES
 
 
 class LeetifyClient:
@@ -126,26 +130,30 @@ def normalize_leetify_match(detail, tracked_by_steam):
     raw_map = str(detail.get("map_name") or detail.get("mapName") or "unknown").strip().lower()
     game_map = raw_map.removeprefix("de_")
     date_iso = _iso_utc(detail.get("finished_at") or detail.get("finishedAt") or detail.get("created_at"))
+    if not date_iso:
+        return []
 
     scores_by_team = {}
     raw_scores = detail.get("team_scores") or detail.get("teamScores") or []
     if isinstance(raw_scores, list):
         for entry in raw_scores:
             if isinstance(entry, dict):
-                t_num = entry.get("team_number") if entry.get("team_number") is not None else entry.get("teamNumber")
+                t_num = _safe_int(entry.get("team_number") if entry.get("team_number") is not None else entry.get("teamNumber"))
                 sc = _num(entry.get("score"), integer=True)
                 if t_num is not None and sc is not None:
-                    scores_by_team[int(t_num)] = sc
+                    scores_by_team[t_num] = sc
     elif isinstance(raw_scores, dict):
         for k, v in raw_scores.items():
-            try:
-                scores_by_team[int(k)] = int(v)
-            except (TypeError, ValueError):
-                pass
+            tk = _safe_int(k)
+            sv = _safe_int(v)
+            if tk is not None and sv is not None:
+                scores_by_team[tk] = sv
 
     total_rounds = sum(scores_by_team.values()) if len(scores_by_team) == 2 else _num(detail.get("rounds_count"), integer=True)
 
     players_stats = detail.get("stats") or detail.get("player_stats") or []
+    if not isinstance(players_stats, list):
+        return []
     by_team = {}
     for ps in players_stats:
         if not isinstance(ps, dict):
@@ -153,10 +161,12 @@ def normalize_leetify_match(detail, tracked_by_steam):
         steam_id = str(ps.get("steam64_id") or ps.get("steam64Id") or "").strip()
         if steam_id not in tracked_by_steam:
             continue
-        t_num = ps.get("initial_team_number")
-        if t_num is None:
-            t_num = ps.get("team_number") if ps.get("team_number") is not None else ps.get("teamNumber")
-        team_key = int(t_num) if t_num is not None else 0
+        t_raw = ps.get("initial_team_number")
+        if t_raw is None:
+            t_raw = ps.get("team_number") if ps.get("team_number") is not None else ps.get("teamNumber")
+        team_key = _safe_int(t_raw)
+        if team_key is None:
+            team_key = 0
         by_team.setdefault(team_key, []).append((tracked_by_steam[steam_id], ps))
 
     rows = []
@@ -200,7 +210,7 @@ def normalize_leetify_match(detail, tracked_by_steam):
             utility_damage = (
                 he_avg * he_thrown
                 if he_avg is not None and he_thrown is not None
-                else he_avg
+                else None
             )
 
             rows.append({
@@ -225,7 +235,7 @@ def normalize_leetify_match(detail, tracked_by_steam):
                 "entry_wins": None,
                 "sniper_kills": None,
                 "flash_count": flash_thrown,
-                "flash_successes": _num(ps.get("flashbang_leading_to_kill")),
+                "flash_successes": None,
                 "enemies_flashed": _num(ps.get("flashbang_hit_foe")),
                 "utility_count": utility_count,
                 "utility_damage": utility_damage,
@@ -262,6 +272,7 @@ def normalize_leetify_match(detail, tracked_by_steam):
                 "trade_kills_succeed": _num(ps.get("trade_kills_succeed")),
                 "rounds_survived": _num(ps.get("rounds_survived")),
                 "utility_on_death_avg": _num(ps.get("utility_on_death_avg")),
+                "flash_assists": _num(ps.get("flashbang_leading_to_kill")),
             })
     return rows
 
@@ -277,10 +288,17 @@ def sync_leetify_premier(api_key, path=DB_PATH, since=None, until=None, force=Fa
                     "player_id": r["player_id"],
                     "nickname": r["nickname"],
                 }
-        existing_ids = {r["match_id"] for r in conn.execute("SELECT match_id FROM matches WHERE source='premier'")}
+        existing_ids = {
+            r["match_id"]
+            for r in conn.execute(
+                "SELECT DISTINCT m.match_id FROM matches m "
+                "INNER JOIN player_maps pm ON pm.match_id = m.match_id "
+                "WHERE m.source='premier'"
+            )
+        }
 
     if not tracked_by_steam:
-        return {"found": 0, "imported": 0, "skipped": 0, "failed": []}
+        raise LeetifyError("Nessuno steam_id configurato nella tabella players per la sincronizzazione Premier.")
 
     candidate_ids = set()
     for steam_id in sorted(tracked_by_steam):
@@ -308,16 +326,23 @@ def sync_leetify_premier(api_key, path=DB_PATH, since=None, until=None, force=Fa
         try:
             detail = cli.match_details(gid)
             if not detail:
+                failed.append({"match_id": f"leetify:{gid}", "error": "detail_unavailable"})
                 continue
+            d_ts = _parse_iso_ts(detail.get("finished_at") or detail.get("finishedAt") or detail.get("created_at"))
+            if d_ts is not None:
+                if (since is not None and d_ts < since) or (until is not None and d_ts >= until):
+                    skipped += 1
+                    continue
             rows = normalize_leetify_match(detail, tracked_by_steam)
             if not rows:
+                failed.append({"match_id": f"leetify:{gid}", "error": "no_tracked_players_or_invalid"})
                 continue
             payload = dict(detail)
             payload["match_id"] = f"leetify:{gid}"
             payload["source"] = "premier"
             save_match(payload, rows, path=path)
             imported += 1
-        except (LeetifyError, requests.RequestException) as exc:
+        except (LeetifyError, requests.RequestException, ValueError, TypeError, KeyError, OverflowError) as exc:
             failed.append({"match_id": f"leetify:{gid}", "error": str(exc)})
 
     return {

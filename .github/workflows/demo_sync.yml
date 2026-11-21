@@ -1,4 +1,4 @@
-﻿name: Sync & Demo Pipeline (Parse & Auto-Delete)
+name: Sync & Demo Pipeline (Parse & Auto-Delete)
 on:
   workflow_dispatch:
     inputs:
@@ -54,11 +54,22 @@ jobs:
           FACEIT_API_KEY: ${{ secrets.FACEIT_API_KEY }}
           FACEIT_DOWNLOAD_API_KEY: ${{ secrets.FACEIT_DOWNLOAD_API_KEY }}
           LEETIFY_API_KEY: ${{ secrets.LEETIFY_API_KEY }}
+          DEMO_LIMIT: ${{ github.event.inputs.demo_limit || '5' }}
+          MIN_INTERVAL: ${{ github.event.inputs.min_interval || '12' }}
+          REPROCESS_LOCAL: ${{ github.event.inputs.reprocess_local || 'false' }}
         run: |
           set +e
           sync_rc=0
           demo_rc=0
-          if [ "${{ github.event.inputs.reprocess_local || 'false' }}" = "true" ]; then
+          if ! [[ "$DEMO_LIMIT" =~ ^[0-9]+$ ]] || [ "$DEMO_LIMIT" -lt 1 ] || [ "$DEMO_LIMIT" -gt 50 ]; then
+            echo "Invalid DEMO_LIMIT: $DEMO_LIMIT"
+            exit 1
+          fi
+          if ! [[ "$MIN_INTERVAL" =~ ^[0-9]+$ ]] || [ "$MIN_INTERVAL" -lt 1 ] || [ "$MIN_INTERVAL" -gt 300 ]; then
+            echo "Invalid MIN_INTERVAL: $MIN_INTERVAL"
+            exit 1
+          fi
+          if [ "$REPROCESS_LOCAL" = "true" ]; then
             python -m projectcs.sync --reprocess-local --export-snapshot
             sync_rc=$?
           elif [ -n "$FACEIT_API_KEY" ] || [ -n "$LEETIFY_API_KEY" ]; then
@@ -78,7 +89,7 @@ jobs:
             demo_args+=(--ingest-local)
           fi
           if [ -n "$FACEIT_DOWNLOAD_API_KEY" ] && { [ -n "$DATABASE_URL" ] || [ -f data/projectcs.sqlite ]; }; then
-            demo_args+=(--download-missing --limit "${{ github.event.inputs.demo_limit || '5' }}" --min-interval "${{ github.event.inputs.min_interval || '12' }}")
+            demo_args+=(--download-missing --limit "$DEMO_LIMIT" --min-interval "$MIN_INTERVAL")
           elif [ -z "$FACEIT_DOWNLOAD_API_KEY" ]; then
             echo "FACEIT_DOWNLOAD_API_KEY not configured; skipping automatic demo downloads."
           fi

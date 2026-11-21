@@ -1,4 +1,4 @@
-﻿import csv
+import csv
 import json
 import os
 import re
@@ -114,6 +114,7 @@ MIGRATION_COLUMNS = {
     "trade_kills_succeed": "REAL",
     "rounds_survived": "REAL",
     "utility_on_death_avg": "REAL",
+    "flash_assists": "REAL",
 }
 
 _INITIALIZED_DBS = set()
@@ -137,7 +138,7 @@ _PG_TABLE_COLS = {
         "leetify_rating", "ct_leetify_rating", "t_leetify_rating", "preaim",
         "reaction_time_ms", "counter_strafe_good", "counter_strafe_all",
         "spray_accuracy", "trade_kill_opp", "trade_kills_succeed",
-        "rounds_survived", "utility_on_death_avg",
+        "rounds_survived", "utility_on_death_avg", "flash_assists",
     ],
     "rounds": ["match_id", "map_no", "team_id", "round_no", "payload_json"],
     "events": ["match_id", "map_no", "round_no", "event_index", "tick", "event_type", "player_id", "payload_json"],
@@ -568,21 +569,30 @@ def existing_match_ids(path=DB_PATH):
         return complete_match_ids_conn(conn)
 
 
-def _save_match_conn(conn, match, rows, now=None):
+def _save_match_conn(conn, match, rows, now=None, allow_shrink=False):
     now = now or datetime.now(timezone.utc).isoformat()
     match_id = match["match_id"]
     preserved = {}
+    existing_keys = set()
     for prev in conn.execute(
         "SELECT map_no, team_id, player_id, traded_deaths, untraded_deaths, coverage "
         "FROM player_maps WHERE match_id=?",
         (match_id,),
     ):
+        pkey = (prev["map_no"], prev["team_id"], prev["player_id"])
+        existing_keys.add(pkey)
         if prev["traded_deaths"] is not None or prev["untraded_deaths"] is not None:
-            preserved[(prev["map_no"], prev["team_id"], prev["player_id"])] = (
+            preserved[pkey] = (
                 prev["traded_deaths"],
                 prev["untraded_deaths"],
                 prev["coverage"],
             )
+    new_keys = {(int(r["map_no"]), str(r["team_id"]), str(r["player_id"])) for r in rows}
+    if not allow_shrink and existing_keys and not existing_keys.issubset(new_keys):
+        raise ValueError(
+            f"Risposta parziale per {match_id}: righe mancanti rispetto ai dati già salvati "
+            f"({len(new_keys)} nuove vs {len(existing_keys)} esistenti)."
+        )
     match_source = (rows[0].get("source") if rows else None) or match.get("source") or "faceit"
     conn.execute(
         "INSERT OR REPLACE INTO matches VALUES (?,?,?,?,?)",

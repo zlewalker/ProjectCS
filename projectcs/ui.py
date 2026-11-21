@@ -1,4 +1,4 @@
-﻿"""Presentazione e grafici. Nessuna modifica alle metriche o ai dati salvati."""
+"""Presentazione e grafici. Nessuna modifica alle metriche o ai dati salvati."""
 from html import escape
 
 import pandas as pd
@@ -28,7 +28,7 @@ VIEWS = {
     "Meccanica (Leetify)": [
         "Giocatore", "Mappe", "Leetify Rating", "Rating T", "Rating CT",
         "Preaim (°)", "TTD (ms)", "Counter-strafe %", "Spray %",
-        "Trade kill %", "Sopravvivenza %", "Util. persa / morte",
+        "Trade kill %", "Sopravvivenza %", "Flash assist", "Util. persa / morte",
     ],
 }
 OLD_VIEWS = {"base": "Sintesi", "entry_awp": "AWP e trade", "support_clutch": "Utility"}
@@ -155,8 +155,8 @@ def show_table(df):
         "Aperture %": ("Entry win %", "%.1f%%", 125, "Aperture vinte / tentativi."),
         "Freq. aperture %": ("Entry / round", "%.1f%%", 135, "Tentativi di apertura / round giocati."),
         "Morti in apertura %": ("Morti entry %", "%.1f%%", 140, "Morti nel primo duello / morti totali."),
-        "Morti senza trade %": ("No trade %", "%.1f%%", 125, "Morti non scambiate entro 5s. Richiede demo completa."),
-        "UDR": ("Danno util. / r", "%.1f", 135, "Danno da utility per round."),
+        "Morti senza trade %": ("No trade %", "%.1f%%", 125, "Morti non scambiate (finestra 5s su demo FACEIT; metrica Leetify su Premier)."),
+        "UDR": ("Danno util. / r", "%.1f", 135, "Danno da utility per round (tutte le utility su FACEIT; solo HE su Premier)."),
         "Flash lanciate": ("Flash", "%d", 85, "Flash lanciate nel campione coperto."),
         "Flash %": ("Flash utili %", "%.1f%%", 130, "Flash efficaci / flash lanciate."),
         "Nemici flash/r": ("Nemici flash / r", "%.2f", 150, "Nemici accecati per round."),
@@ -197,6 +197,7 @@ def show_table(df):
         "Spray %": ("Spray %", "%.1f%%", 95, "Precisione spray media."),
         "Trade kill %": ("Trade kill %", "%.1f%%", 115, "Trade kill riuscite / opportunità di trade."),
         "Sopravvivenza %": ("Sopravv. %", "%.1f%%", 105, "Percentuale di round sopravvissuti."),
+        "Flash assist": ("Flash assist", "%d", 105, "Flash che hanno portato direttamente a una kill (Leetify)."),
         "Util. persa / morte": ("Util. persa $", "$%.0f", 115, "Valore medio di utility persa alla morte."),
         "Valore medio equip.": ("Equip. medio $", "$%.0f", 125, "Valore medio equipaggiamento di squadra a inizio round."),
     }

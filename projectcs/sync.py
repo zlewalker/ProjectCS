@@ -46,18 +46,58 @@ def _write_and_validate_csv(tmp_path, rows):
             raise RuntimeError("Conteggio righe CSV temporaneo incoerente.")
 
 
-def export_snapshot(db_path=DB_PATH, published_dir=None):
+def export_snapshot(db_path=DB_PATH, published_dir=None, allow_shrink=False):
     published = Path(published_dir) if published_dir else (ROOT / "published")
     published.mkdir(parents=True, exist_ok=True)
-    restore_published_demo_state(db_path=db_path, published_dir=published)
 
-    rows = read_rows(db_path)
-    if not rows:
-        raise RuntimeError("Impossibile esportare lo snapshot: nessuna riga disponibile.")
-
-    demo_events = read_demo_events(db_path)
-    demo_rounds = read_demo_rounds(db_path)
-    demo_status = read_demo_status(db_path)
+    with connect(db_path, readonly=True) as conn:
+        tables = {
+            r["name"]
+            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        rows = [dict(r) for r in conn.execute("SELECT * FROM player_maps ORDER BY date")] if "player_maps" in tables else []
+        if not rows:
+            raise RuntimeError("Impossibile esportare lo snapshot: nessuna riga disponibile.")
+        demo_events = []
+        if "events" in tables:
+            for r in conn.execute(
+                "SELECT match_id, map_no, round_no, event_index, tick, event_type, player_id, payload_json "
+                "FROM events ORDER BY match_id, map_no, event_index"
+            ):
+                p = json.loads(r["payload_json"]) if r["payload_json"] else {}
+                demo_events.append({
+                    "match_id": r["match_id"], "map_no": r["map_no"], "round_no": r["round_no"],
+                    "event_index": r["event_index"], "tick": r["tick"], "event_type": r["event_type"],
+                    "map": p.get("map"), "date": p.get("date"),
+                    "victim_id": p.get("victim_id") or r["player_id"], "victim_name": p.get("victim_name"),
+                    "victim_team": p.get("victim_team"), "victim_side": p.get("victim_side"),
+                    "attacker_id": p.get("attacker_id"), "attacker_name": p.get("attacker_name"),
+                    "attacker_team": p.get("attacker_team"), "attacker_side": p.get("attacker_side"),
+                    "time_sec": p.get("time_sec"), "weapon": p.get("weapon"), "headshot": p.get("headshot"),
+                    "is_opening": p.get("is_opening"), "is_traded": p.get("is_traded"),
+                    "victim_x": p.get("victim_x"), "victim_y": p.get("victim_y"), "victim_z": p.get("victim_z"),
+                    "attacker_x": p.get("attacker_x"), "attacker_y": p.get("attacker_y"), "attacker_z": p.get("attacker_z"),
+                })
+        demo_rounds = []
+        if "rounds" in tables:
+            pm_meta = {
+                (r["match_id"], int(r["map_no"]), str(r["team_id"] or "")): (r["map"], r["date"], r["roster_count"])
+                for r in rows
+            }
+            for r in conn.execute("SELECT match_id, map_no, team_id, round_no, payload_json FROM rounds ORDER BY match_id, map_no, team_id, round_no"):
+                p = json.loads(r["payload_json"]) if r["payload_json"] else {}
+                tid = str(r["team_id"] or p.get("team_id") or "")
+                m_map, m_date, m_rc = pm_meta.get((r["match_id"], int(r["map_no"]), tid), (p.get("map"), p.get("date"), p.get("roster_count")))
+                demo_rounds.append({
+                    "match_id": r["match_id"], "map_no": r["map_no"], "round_no": r["round_no"],
+                    "map": m_map, "date": m_date, "team_id": tid, "roster_count": m_rc,
+                    "side": p.get("side"), "won": p.get("won"), "win_reason": p.get("win_reason"),
+                    "first_kill": p.get("first_kill"), "first_death": p.get("first_death"),
+                    "plant_site": p.get("plant_site"), "post_plant_won": p.get("post_plant_won"),
+                    "retake_attempted": p.get("retake_attempted"), "retake_won": p.get("retake_won"),
+                    "equip_value": p.get("equip_value"), "buy_type": p.get("buy_type"),
+                })
+        demo_status = [dict(r) for r in conn.execute("SELECT * FROM demo_status ORDER BY match_id, map_no")] if "demo_status" in tables else []
 
     csv_path = published / "player_maps.csv"
     events_path = published / "demo_events.csv"
@@ -65,20 +105,34 @@ def export_snapshot(db_path=DB_PATH, published_dir=None):
     status_path = published / "demo_status.csv"
     meta_path = published / "metadata.json"
 
-    pid = os.getpid()
-    csv_tmp = published / f".player_maps.{pid}.csv.tmp"
-    events_tmp = published / f".demo_events.{pid}.csv.tmp"
-    rounds_tmp = published / f".demo_rounds.{pid}.csv.tmp"
-    status_tmp = published / f".demo_status.{pid}.csv.tmp"
-    meta_tmp = published / f".metadata.{pid}.json.tmp"
-
     metadata = {
+        "schema_version": 2,
+        "generation_id": datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "matches": len({r["match_id"] for r in rows}),
         "player_maps": len(rows),
         "demo_events": len(demo_events),
         "demo_rounds": len(demo_rounds),
     }
+
+    if not allow_shrink and meta_path.exists():
+        try:
+            prev_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            prev_meta = {}
+        for k in ("matches", "player_maps", "demo_events", "demo_rounds"):
+            prev_val = int(prev_meta.get(k) or 0)
+            if prev_val > 0 and metadata[k] < prev_val:
+                raise RuntimeError(
+                    f"Esportazione snapshot bloccata: regressione su '{k}' ({metadata[k]} < {prev_val})."
+                )
+
+    pid = os.getpid()
+    csv_tmp = published / f".player_maps.{pid}.csv.tmp"
+    events_tmp = published / f".demo_events.{pid}.csv.tmp"
+    rounds_tmp = published / f".demo_rounds.{pid}.csv.tmp"
+    status_tmp = published / f".demo_status.{pid}.csv.tmp"
+    meta_tmp = published / f".metadata.{pid}.json.tmp"
 
     try:
         _write_and_validate_csv(csv_tmp, rows)
@@ -161,6 +215,7 @@ def main():
     parser.add_argument("--force", action="store_true", help="Riscarica anche le partite già presenti nel database")
     parser.add_argument("--reprocess-local", action="store_true", help="Ricalcola player_maps dai raw_json locali senza rete")
     parser.add_argument("--export-snapshot", action="store_true", help="Aggiorna published/player_maps.csv e metadata.json")
+    parser.add_argument("--allow-shrink", action="store_true", help="Consenti esportazione snapshot anche con meno righe rispetto al precedente")
     args = parser.parse_args()
 
     if args.reprocess_local:
@@ -195,6 +250,9 @@ def main():
         parser.error("--since deve precedere --until")
     key = _load_secret("FACEIT_API_KEY")
     leetify_key = _load_secret("LEETIFY_API_KEY")
+    if args.source == "premier" and not leetify_key:
+        print("LEETIFY_API_KEY mancante per --source premier.")
+        return 1
     exit_rc = 0
     try:
         if args.source in {"all", "faceit"} and (key or not leetify_key):
@@ -258,7 +316,7 @@ def main():
 
         if args.export_snapshot and exit_rc == 0:
             try:
-                meta = export_snapshot()
+                meta = export_snapshot(allow_shrink=args.allow_shrink)
                 print(f"Snapshot esportato: {meta['matches']} partite, {meta['player_maps']} righe.")
             except Exception as error:
                 print(f"Esportazione snapshot fallita: {error}")

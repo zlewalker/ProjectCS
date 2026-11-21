@@ -45,14 +45,14 @@ Nell'ambiente portable preparato sul PC del proprietario è disponibile anche
   - Sezione **Demo & Heatmap** su Streamlit con **Mappa Tattica 2D / Heatmap Radar** (calibrazione coordinate CS2 `[0..1024]` e traiettorie duelli), **Split reale Lato T vs CT**, **Conversioni 5v4 / Recuperi 4v5**, **Post-plant / Retake Siti A e B** e **Rendimento per Economia** (`Pistol`, `Eco`, `Force`, `Full Buy`).
   - Workflow **GitHub Actions** (`.github/workflows/demo_sync.yml`) per eseguire sync, download/parsing demo e auto-cancellazione direttamente nel cloud di GitHub senza occupare spazio in locale.
 
-Le statistiche visualizzate provengono esclusivamente dalle partite importate da FACEIT (e dagli eventuali eventi demo associati).
-Accesso API e importazione live verificati il 12 novembre 2026. Le chiavi restano locali.
+Le statistiche visualizzate provengono dalle partite **FACEIT** (con eventuali eventi demo associati) e dalle partite **CS2 Premier** importate tramite **Leetify Public API**, separabili tramite il selettore principale `FACEIT / Premier / Tutte` in cima alla dashboard.
+Lo stato persistente può risiedere su **Supabase PostgreSQL** (`DATABASE_URL`) oppure in locale su SQLite, con snapshot di fallback in `published/`.
 
 ## Configurazione e sincronizzazione
 
 Copia `.streamlit/secrets.example.toml` in `.streamlit/secrets.toml`
-e inserisci una chiave FACEIT **server-side**. Imposta una password amministratore
-casuale di almeno 32 caratteri. Non committare i secrets.
+e inserisci `FACEIT_API_KEY`, `LEETIFY_API_KEY`, `DATABASE_URL` (opzionale per Supabase)
+e `ADMIN_PASSWORD`. Non committare i secrets.
 
 ```powershell
 # Importazione incrementale (scarica solo i match non ancora presenti in DB):

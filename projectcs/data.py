@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 import pandas as pd
 
 from projectcs.config import DB_PATH, NAMES, ROOT
@@ -67,6 +67,7 @@ COLUMNS = [
     "trade_kills_succeed",
     "rounds_survived",
     "utility_on_death_avg",
+    "flash_assists",
 ]
 
 NUMERIC_COLUMNS = [
@@ -119,6 +120,7 @@ NUMERIC_COLUMNS = [
     "trade_kills_succeed",
     "rounds_survived",
     "utility_on_death_avg",
+    "flash_assists",
 ]
 
 _SNAPSHOT_CACHE = {}
@@ -138,8 +140,11 @@ def read_snapshot(path=None):
     if not target.exists():
         return []
     stat = target.stat()
-    cache_key = (str(target.resolve()), stat.st_mtime_ns, stat.st_size)
+    resolved = str(target.resolve())
+    cache_key = (resolved, stat.st_mtime_ns, stat.st_size)
     if cache_key not in _SNAPSHOT_CACHE:
+        for stale_key in [k for k in _SNAPSHOT_CACHE if k[0] == resolved]:
+            _SNAPSHOT_CACHE.pop(stale_key, None)
         _SNAPSHOT_CACHE[cache_key] = pd.read_csv(target).to_dict("records")
     return [dict(r) for r in _SNAPSHOT_CACHE[cache_key]]
 
@@ -323,6 +328,11 @@ def player_summary(df):
                 ),
                 "Sopravvivenza %": _paired_ratio(
                     rows, "rounds_survived", "rounds", scale=100.0
+                ),
+                "Flash assist": (
+                    int(rows["flash_assists"].dropna().sum())
+                    if not rows["flash_assists"].dropna().empty
+                    else None
                 ),
                 "Util. persa / morte": _weighted_avg(rows, "utility_on_death_avg", "deaths"),
             }

@@ -195,7 +195,8 @@ class SyncTests(unittest.TestCase):
         from projectcs.leetify import is_premier_match, sync_leetify_premier
 
         self.assertTrue(is_premier_match({"dataSource": "matchmaking_premier"}))
-        self.assertTrue(is_premier_match({"dataSource": "matchmaking"}))
+        self.assertTrue(is_premier_match({"dataSource": "premier"}))
+        self.assertFalse(is_premier_match({"dataSource": "matchmaking"}))
         self.assertFalse(is_premier_match({"dataSource": "faceit"}))
 
         encoded = _normalize_pg_url("postgresql://user:p?w#d@aws-1-eu-west-1.pooler.supabase.com:5432/postgres")
@@ -264,13 +265,34 @@ class SyncTests(unittest.TestCase):
             lew = next(r for r in rows if r["nickname"] == "LEWALKER")
             self.assertEqual(lew["traded_deaths"], 5.0)
             self.assertEqual(lew["untraded_deaths"], 9.0)
-            self.assertEqual(lew["flash_successes"], 2.0)
+            self.assertIsNone(lew["flash_successes"])
+            self.assertEqual(lew["flash_assists"], 2.0)
             self.assertAlmostEqual(lew["utility_damage"], 46.0)
             self.assertAlmostEqual(lew["leetify_rating"], 0.045)
             self.assertAlmostEqual(lew["preaim"], 9.4)
             reproc = reprocess_stored_matches(db)
             self.assertEqual(reproc["matches"], 1)
             self.assertEqual(reproc["failed"], [])
+
+            # Verifica protezione anti-shrink su risposte parziali
+            class PartialLeetifyClient(FakeLeetifyClient):
+                def match_details(self, game_id):
+                    d = super().match_details(game_id)
+                    d["stats"] = d["stats"][:1]
+                    return d
+
+            res_partial = sync_leetify_premier("dummy-key", path=db, force=True, client=PartialLeetifyClient())
+            self.assertEqual(len(res_partial["failed"]), 1)
+            self.assertEqual(len(read_rows(db)), 2)
+
+            # Verifica protezione anti-regressione su export_snapshot
+            snap_dir = Path(folder) / "pub_guard"
+            sync.export_snapshot(db_path=db, published_dir=snap_dir)
+            db_small = Path(folder) / "small.sqlite"
+            save_match({"match_id": "only1"}, [sample_row(match_id="only1")], db_small)
+            # db_small ha 1 riga vs 2 righe di db: deve bloccare senza --allow-shrink
+            with self.assertRaises(RuntimeError):
+                sync.export_snapshot(db_path=db_small, published_dir=snap_dir)
 
 
 if __name__ == "__main__":
