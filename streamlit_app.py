@@ -58,7 +58,6 @@ def owner_access():
         return False
     expected = secret("ADMIN_PASSWORD")
     if not expected:
-        st.caption("Gestione disabilitata · configura ADMIN_PASSWORD nei secrets.")
         return False
     if st.session_state.get("owner_digest") == hashlib.sha256(expected.encode()).hexdigest():
         if st.button("Esci dalla gestione", width="stretch"):
