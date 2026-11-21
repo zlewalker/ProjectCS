@@ -1,4 +1,4 @@
-"""Uso:
+﻿"""Uso:
   python -m projectcs.sync --since 2026-08-20 --until 2026-11-13
   python -m projectcs.sync --reprocess-local --export-snapshot
 """
@@ -197,7 +197,7 @@ def main():
     leetify_key = _load_secret("LEETIFY_API_KEY")
     exit_rc = 0
     try:
-        if args.source in {"all", "faceit"} and key:
+        if args.source in {"all", "faceit"} and (key or not leetify_key):
             client = FaceitClient(key)
             tracked = {}
             for nickname in NAMES:
@@ -272,3 +272,4 @@ def main():
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

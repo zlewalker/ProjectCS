@@ -1,4 +1,4 @@
-﻿import json
+﻿﻿import json
 import sys
 import tempfile
 import unittest
@@ -191,7 +191,7 @@ class SyncTests(unittest.TestCase):
             self.assertEqual(list(snap_dir.glob("*.tmp")), [])
 
     def test_leetify_premier_sync_and_postgres_helpers(self):
-        from projectcs.db import _normalize_pg_url, _translate_sql_for_pg, read_rows
+        from projectcs.db import _normalize_pg_url, _translate_sql_for_pg, read_rows, reprocess_stored_matches
         from projectcs.leetify import is_premier_match, sync_leetify_premier
 
         self.assertTrue(is_premier_match({"dataSource": "matchmaking_premier"}))
@@ -275,4 +275,5 @@ class SyncTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
