@@ -90,7 +90,13 @@ class LeetifyClient:
     def get(self, path, params=None, allow_not_found=False):
         url = path if path.startswith("http") else f"{BASE_URL}{path}"
         for attempt in range(4):
-            resp = self.session.get(url, headers=self.headers, params=params, timeout=30)
+            try:
+                resp = self.session.get(url, headers=self.headers, params=params, timeout=30)
+            except requests.RequestException as exc:
+                if attempt < 3:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise LeetifyError(f"Errore di rete/timeout Leetify API: {exc}") from exc
             if allow_not_found and resp.status_code == 404:
                 return None
             if resp.status_code == 401 or resp.status_code == 403:
