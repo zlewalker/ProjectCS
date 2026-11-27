@@ -293,7 +293,28 @@ def show_players(df, compact=False, view="Sintesi"):
     columns = VIEWS.get(name, VIEWS["Sintesi"])
     if compact:
         columns = ["Mappe", "ADR", "K/D", "DPR", "Vittorie %"]
-    show_table(table[[column for column in columns if column in table]])
+    sub = table[[column for column in columns if column in table]]
+    metric_cols = [c for c in sub.columns if c not in {"Giocatore", "Mappe"}]
+    if not compact and metric_cols and sub[metric_cols].isna().all().all():
+        sources = (
+            {str(s).strip().lower() for s in df["source"].dropna().unique()}
+            if "source" in df
+            else set()
+        )
+        if name == "Meccanica (Leetify)" and sources == {"faceit"}:
+            st.info(
+                "Le statistiche di «Meccanica (Leetify)» sono disponibili solo per le partite Premier. "
+                "Seleziona «Premier» o «Tutte» nel filtro Circuito di gioco in alto."
+            )
+        elif sources == {"premier"}:
+            st.info(
+                f"La vista «{name}» non ha metriche disponibili su Premier perché l'API pubblica Leetify "
+                "non espone questi contatori. Usa «Sintesi» o «Meccanica (Leetify)»."
+            )
+        else:
+            st.info(f"Nessuna metrica disponibile nella vista «{name}» per il campione selezionato.")
+        return
+    show_table(sub)
 
 def player_view(df, key):
     selected = st.radio("Area di analisi", list(VIEWS), horizontal=True,

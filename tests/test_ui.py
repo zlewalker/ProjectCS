@@ -9,6 +9,7 @@ from projectcs.ui import (
     build_map_chart,
     build_radar_heatmap_chart,
     build_trend_chart,
+    show_players,
     show_table,
     trend_data,
 )
@@ -114,6 +115,19 @@ class ChartTests(unittest.TestCase):
         self.assertNotIn("javascript:alert", html)
         self.assertEqual(_format_cell(None, "%d"), "—")
         self.assertEqual(_format_cell(5, "%+d"), "+5")
+
+    def test_show_players_explains_unavailable_circuit_metrics(self):
+        df_faceit = frame([sample_row(source="faceit")])
+        with patch("projectcs.ui.st.info") as mock_info:
+            show_players(df_faceit, view="Meccanica (Leetify)")
+        mock_info.assert_called_once()
+        self.assertIn("Premier", mock_info.call_args.args[0])
+
+        df_premier = frame([sample_row(source="premier", entry_count=None, entry_wins=None)])
+        with patch("projectcs.ui.st.info") as mock_info:
+            show_players(df_premier, view="Aperture")
+        mock_info.assert_called_once()
+        self.assertIn("Leetify", mock_info.call_args.args[0])
 
 if __name__ == "__main__":
     unittest.main()

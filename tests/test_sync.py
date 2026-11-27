@@ -295,6 +295,13 @@ class SyncTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 sync.export_snapshot(db_path=db_small, published_dir=snap_dir)
 
+    def test_normalize_leetify_reaction_time_fallback(self):
+        from projectcs.leetify import _reaction_time_ms
+        self.assertAlmostEqual(_reaction_time_ms({"reaction_time_ms": 480}), 480.0)
+        self.assertAlmostEqual(_reaction_time_ms({"reaction_time": 0.54}), 540.0)
+        self.assertAlmostEqual(_reaction_time_ms({"reaction_time": 540}), 540.0)
+        self.assertIsNone(_reaction_time_ms({}))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -38,6 +38,16 @@ def _safe_int(value):
     return _num(value, integer=True)
 
 
+def _reaction_time_ms(ps):
+    ms = _num(ps.get("reaction_time_ms"))
+    if ms is not None:
+        return ms
+    raw = _num(ps.get("reaction_time"))
+    if raw is None:
+        return None
+    return raw * 1000.0 if 0 < raw < 10 else raw
+
+
 def _parse_iso_ts(value):
     if not value:
         return None
@@ -271,7 +281,7 @@ def normalize_leetify_match(detail, tracked_by_steam):
                 "ct_leetify_rating": _num(ps.get("ct_leetify_rating")),
                 "t_leetify_rating": _num(ps.get("t_leetify_rating")),
                 "preaim": _num(ps.get("preaim")),
-                "reaction_time_ms": _num(ps.get("reaction_time_ms")),
+                "reaction_time_ms": _reaction_time_ms(ps),
                 "counter_strafe_good": _num(ps.get("counter_strafing_shots_good")),
                 "counter_strafe_all": _num(ps.get("counter_strafing_shots_all")),
                 "spray_accuracy": _num(ps.get("spray_accuracy")),
