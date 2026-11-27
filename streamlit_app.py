@@ -292,7 +292,13 @@ elif page == "Partite":
     game = options[chosen]
     detail = filtered[(filtered["match_id"] == game.match_id) & (filtered["map_no"] == game.map_no) & (filtered["team_id"] == game.team_id)]
     player_view(detail, key="match_stats")
-    st.link_button("Apri la matchroom FACEIT", f"https://www.faceit.com/en/cs2/room/{game.match_id}")
+    is_leetify = str(game.match_id).startswith("leetify:")
+    room_url = (
+        "https://leetify.com/app/match-details/" + str(game.match_id).removeprefix("leetify:")
+        if is_leetify
+        else f"https://www.faceit.com/en/cs2/room/{game.match_id}"
+    )
+    st.link_button("Apri match su Leetify" if is_leetify else "Apri la matchroom FACEIT", room_url)
     st.download_button("Esporta il campione CSV", filtered.to_csv(index=False).encode("utf-8-sig"),
                        file_name="projectcs-campione.csv", mime="text/csv")
     st.caption("Per associare una nota a questa partita usa la sezione Revisione.")
@@ -423,7 +429,7 @@ elif page == "Demo & Heatmap":
             config=RADAR_CHART_CONFIG,
         )
         st.caption("Usa la rotella del mouse per fare zoom e clicca + trascina per spostarti sulla mappa (doppio clic per ripristinare la vista).")
-        if map_ev.empty or map_ev.dropna(subset=["victim_rx", "victim_ry"]).empty:
+        if map_ev.empty or map_ev.dropna(subset=[x_col, y_col]).empty:
             st.caption(
                 f"Nessuna coordinata posizionale demo presente per {str(hm_map).title()} con i filtri selezionati. "
                 "Il grafico mostra la griglia tattica di riferimento dei siti."

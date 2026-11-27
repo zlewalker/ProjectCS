@@ -137,6 +137,30 @@ def build_trend_chart(games, start=1, end=None, adaptive=False):
 def metric_value(value, suffix=""):
     return "—" if value is None or pd.isna(value) else f"{value:.1f}{suffix}"
 
+def _format_cell(value, fmt):
+    if value is None or pd.isna(value):
+        return "—"
+    if fmt == "%d":
+        return f"{int(round(float(value)))}"
+    if fmt == "%+d":
+        return f"{int(round(float(value))):+d}"
+    if fmt == "%.1f":
+        return f"{float(value):.1f}"
+    if fmt == "%.2f":
+        return f"{float(value):.2f}"
+    if fmt == "%+.2f":
+        return f"{float(value):+.2f}"
+    if fmt == "%.1f%%":
+        return f"{float(value):.1f}%"
+    if fmt == "%.1f°":
+        return f"{float(value):.1f}°"
+    if fmt == "%.0f":
+        return f"{float(value):.0f}"
+    if fmt == "$%.0f":
+        return f"${float(value):.0f}"
+    return str(value)
+
+
 def show_table(df):
     if df.empty:
         st.info("Nessun dato disponibile per questo campione.")
@@ -201,32 +225,64 @@ def show_table(df):
         "Util. persa / morte": ("Util. persa $", "$%.0f", 115, "Valore medio di utility persa alla morte."),
         "Valore medio equip.": ("Equip. medio $", "$%.0f", 125, "Valore medio equipaggiamento di squadra a inizio round."),
     }
-    config = {
-        key: st.column_config.NumberColumn(label, format=fmt, width=width, help=help_text)
-        for key, (label, fmt, width, help_text) in definitions.items() if key in table
-    }
-    for key in ["Giocatore", "Mappa", "Data", "Esito", "Punteggio", "Situazione", "Circuito"]:
-        if key in table:
-            config[key] = st.column_config.TextColumn(key, width=155 if key == "Giocatore" else 110)
-    if "Formazione" in table:
-        config["Formazione"] = st.column_config.TextColumn("Formazione", width=440)
-    if "Matchroom" in table:
-        config["Matchroom"] = st.column_config.LinkColumn("FACEIT", display_text="Apri ↗", width=100)
-    if "ID partita" in table:
-        config["ID partita"] = st.column_config.TextColumn("ID partita", width=340)
-    styled = table.style.format(na_rep="—").apply(
-        lambda row: ["background-color: " + ("#1a1a1a" if row.name % 2 == 0 else "#252525") +
-                     "; color: #f4f4f4"] * len(row), axis=1)
-    for key in ["Giocatore", "Formazione"]:
-        if key in table:
-            styled = styled.set_properties(subset=[key], **{"font-weight": "bold", "color": "#ffb38c"})
-    if "Esito" in table:
-        styled = styled.map(lambda value: "color: #77d49a; font-weight: bold" if value == "Vittoria"
-                            else ("color: #f08080; font-weight: bold" if value == "Sconfitta" else ""),
-                            subset=["Esito"])
-    st.dataframe(styled, hide_index=True, width="stretch",
-                 height="content" if len(table) <= 12 else 600, row_height=42,
-                 column_config=config)
+    headers_html = []
+    for col in table.columns:
+        if col in definitions:
+            label, _, _, help_text = definitions[col]
+            title_attr = f' title="{escape(help_text)}"' if help_text else ""
+            cls = "pcs-th-num"
+        elif col == "Matchroom":
+            label = "Link"
+            title_attr = ' title="Apri il riepilogo della partita"'
+            cls = "pcs-th-text"
+        else:
+            label = str(col)
+            title_attr = ""
+            cls = "pcs-th-wide" if col == "Formazione" else "pcs-th-text"
+        headers_html.append(f'<th class="{cls}"{title_attr}>{escape(label)}</th>')
+
+    rows_html = []
+    for idx, row in enumerate(table.to_dict("records")):
+        cells = []
+        for col in table.columns:
+            raw = row.get(col)
+            classes = []
+            if col in definitions:
+                _, fmt, _, _ = definitions[col]
+                classes.append("pcs-td-num")
+                cell_html = escape(_format_cell(raw, fmt))
+            elif col == "Matchroom":
+                url = "" if raw is None or pd.isna(raw) else str(raw).strip()
+                if url.startswith(("https://", "http://")):
+                    cell_html = f'<a class="pcs-link" href="{escape(url)}" target="_blank" rel="noopener noreferrer">Apri ↗</a>'
+                else:
+                    cell_html = "—"
+            else:
+                text = "—" if raw is None or pd.isna(raw) or str(raw) == "" else str(raw)
+                if col in {"Giocatore", "Formazione"}:
+                    classes.append("pcs-td-accent")
+                if col == "Formazione":
+                    classes.append("pcs-td-wrap")
+                if col == "Esito":
+                    if text == "Vittoria":
+                        classes.append("pcs-td-win")
+                    elif text == "Sconfitta":
+                        classes.append("pcs-td-loss")
+                cell_html = escape(text)
+            cls_attr = f' class="{" ".join(classes)}"' if classes else ""
+            cells.append(f"<td{cls_attr}>{cell_html}</td>")
+        row_cls = "pcs-row-even" if idx % 2 == 0 else "pcs-row-odd"
+        rows_html.append(f'<tr class="{row_cls}">{"".join(cells)}</tr>')
+
+    html = (
+        '<div class="pcs-table-wrap">'
+        '<table class="pcs-table">'
+        f'<thead><tr>{"".join(headers_html)}</tr></thead>'
+        f'<tbody>{"".join(rows_html)}</tbody>'
+        "</table>"
+        "</div>"
+    )
+    st.markdown(html, unsafe_allow_html=True)
 
 def show_players(df, compact=False, view="Sintesi"):
     table = player_summary(df)

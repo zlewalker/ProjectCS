@@ -1,12 +1,15 @@
 import unittest
 import pandas as pd
 from fixtures import sample_row
+from unittest.mock import patch
 from projectcs.data import frame
 from projectcs.ui import (
     RADAR_CHART_CONFIG,
+    _format_cell,
     build_map_chart,
     build_radar_heatmap_chart,
     build_trend_chart,
+    show_table,
     trend_data,
 )
 
@@ -77,6 +80,40 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(len(fig.layout.images), 1)
         self.assertEqual(list(fig.layout.xaxis.range), [0, 1024])
         self.assertEqual(list(fig.layout.yaxis.range), [1024, 0])
+
+    def test_show_table_renders_responsive_html_table(self):
+        df = pd.DataFrame([
+            {
+                "Giocatore": "LEWALKER",
+                "Mappe": 12,
+                "ADR": 84.36,
+                "Vittorie %": 58.33,
+                "Esito": "Vittoria",
+                "Matchroom": "https://leetify.com/app/match-details/123",
+            },
+            {
+                "Giocatore": "<script>",
+                "Mappe": None,
+                "ADR": float("nan"),
+                "Vittorie %": 0.0,
+                "Esito": "Sconfitta",
+                "Matchroom": "javascript:alert(1)",
+            },
+        ])
+        with patch("projectcs.ui.st.markdown") as mock_md:
+            show_table(df)
+        mock_md.assert_called_once()
+        html = mock_md.call_args.args[0]
+        self.assertIn('class="pcs-table-wrap"', html)
+        self.assertIn(">Link</th>", html)
+        self.assertIn("84.4", html)
+        self.assertIn("58.3%", html)
+        self.assertIn("pcs-td-win", html)
+        self.assertIn("pcs-td-loss", html)
+        self.assertIn("&lt;script&gt;", html)
+        self.assertNotIn("javascript:alert", html)
+        self.assertEqual(_format_cell(None, "%d"), "—")
+        self.assertEqual(_format_cell(5, "%+d"), "+5")
 
 if __name__ == "__main__":
     unittest.main()
